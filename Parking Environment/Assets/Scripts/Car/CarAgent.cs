@@ -75,7 +75,7 @@ namespace UnityStandardAssets.Vehicles.Car{
 
             rb.transform.position = spawnPosition;
             rb.transform.rotation = startRotation;
-            rb.velocity = Vector3.zero;
+            rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
 
             steps = 0;
@@ -179,7 +179,7 @@ namespace UnityStandardAssets.Vehicles.Car{
 
         private (float[] RDistL, float[] RDistR, float RDistF, float RDistB) RayPerceptionMeasurements(bool LogValues = false){
             RayPerceptionInput RayPerceptionIn = RayPerceptionSensorComponent.GetRayPerceptionInput();
-            RayPerceptionOutput RayPerceptionOut = RayPerceptionSensor.Perceive(RayPerceptionIn);
+            RayPerceptionOutput RayPerceptionOut = RayPerceptionSensor.Perceive(RayPerceptionIn, false);
             RayPerceptionOutput.RayOutput[] RayOutputs = RayPerceptionOut.RayOutputs;
 
             // ArRay length -1 because 2 Rays overlap in the end of the array when using 180 degree setting. Using 1 of the 2 is perfectly fine.

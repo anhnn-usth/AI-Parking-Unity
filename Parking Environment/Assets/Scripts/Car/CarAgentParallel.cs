@@ -141,7 +141,7 @@ namespace UnityStandardAssets.Vehicles.Car{
 
             rb.transform.position = spawnPosition;
             rb.transform.rotation = startRotation;
-            rb.velocity = Vector3.zero;
+            rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
 
             steps = 0;

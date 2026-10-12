@@ -81,14 +81,14 @@ namespace UnityStandardAssets.Vehicles.Car
         private void CalculateSpeed(){
             
             Vector3 CarVector = m_Rigidbody.transform.forward;
-            Vector3 SpeedVector = m_Rigidbody.velocity;
+            Vector3 SpeedVector = m_Rigidbody.linearVelocity;
 
             // If angle between these vectors is 0, then the car is moving in the same direction as the forward vector
             // Else it's 180, and moving reverse.
             float angle = Vector3.Angle(CarVector, SpeedVector);
             angle = Mathf.Round(angle);
 
-            _currentSpeed = m_Rigidbody.velocity.magnitude * 2.23693629f;
+            _currentSpeed = m_Rigidbody.linearVelocity.magnitude * 2.23693629f;
 
             // Take a larger value to allow a deadzone
             // Sometimes values don't perfectly match probably because of rounding errors or floating point percision
@@ -197,20 +197,20 @@ namespace UnityStandardAssets.Vehicles.Car
 
         private void CapSpeed()
         {
-            float speed = m_Rigidbody.velocity.magnitude;
+            float speed = m_Rigidbody.linearVelocity.magnitude;
             switch (m_SpeedType)
             {
                 case SpeedType.MPH:
 
                     speed *= 2.23693629f;
                     if (speed > m_Topspeed)
-                        m_Rigidbody.velocity = (m_Topspeed/2.23693629f) * m_Rigidbody.velocity.normalized;
+                        m_Rigidbody.linearVelocity = (m_Topspeed/2.23693629f) * m_Rigidbody.linearVelocity.normalized;
                     break;
 
                 case SpeedType.KPH:
                     speed *= 3.6f;
                     if (speed > m_Topspeed)
-                        m_Rigidbody.velocity = (m_Topspeed/3.6f) * m_Rigidbody.velocity.normalized;
+                        m_Rigidbody.linearVelocity = (m_Topspeed/3.6f) * m_Rigidbody.linearVelocity.normalized;
                     break;
             }
         }
@@ -296,7 +296,7 @@ namespace UnityStandardAssets.Vehicles.Car
             {
                 var turnadjust = (transform.eulerAngles.y - m_OldRotation) * m_SteerHelper;
                 Quaternion velRotation = Quaternion.AngleAxis(turnadjust, Vector3.up);
-                m_Rigidbody.velocity = velRotation * m_Rigidbody.velocity;
+                m_Rigidbody.linearVelocity = velRotation * m_Rigidbody.linearVelocity;
             }
             m_OldRotation = transform.eulerAngles.y;
         }
