@@ -58,6 +58,17 @@ namespace UnityStandardAssets.Vehicles.Car
         public float Revs { get; private set; }
         public float AccelInput { get; private set; }
 
+        public float MaxSteeringAngle { get { return m_MaximumSteerAngle; } }
+        public float WheelBase {
+            get {
+                // Calculate distance between front (index 0) and rear (index 2) axles along the Z axis
+                if (m_WheelColliders != null && m_WheelColliders.Length >= 3) {
+                    return Mathf.Abs(m_WheelColliders[0].transform.localPosition.z - m_WheelColliders[2].transform.localPosition.z);
+                }
+                return 2.5f; // Safe fallback
+            }
+        }
+
         // Use this for initialization
         private void Start()
         {

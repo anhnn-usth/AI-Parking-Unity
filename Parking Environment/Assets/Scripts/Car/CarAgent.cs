@@ -41,6 +41,13 @@ namespace UnityStandardAssets.Vehicles.Car{
         private Vector3 detectedSpotLocation;
         private float predictedSpotSize = 0f;
 
+        // Hybrid A* Integration variables
+        [Header("Hybrid A* Integration")]
+        public HybridAStarPlanner pathPlanner;
+        private List<Vector3> plannedPath = new List<Vector3>();
+        private bool isPathGenerated = false;
+        private int currentWaypointIndex = 0;
+
         void FixedUpdate(){
             // If Looking for spot is enabled, the car will drive and try to find a spot first
             if(isLookingForSpot){
@@ -48,9 +55,7 @@ namespace UnityStandardAssets.Vehicles.Car{
                 FindParkingSpot();
             }
 
-            if(isPositioning && findParkingSpot){
-                PositionCar(-1f);
-            }
+            // PositionCar has been removed, as SAC now handles positioning using the Hybrid A* baseline
 
             // Get desicion from python by requesting the next action
             if(!isLookingForSpot){
@@ -67,7 +72,16 @@ namespace UnityStandardAssets.Vehicles.Car{
             if(findParkingSpot){
                 isLookingForSpot = true;
                 isPositioning = false;
+            } else {
+                isLookingForSpot = false;
+                isPositioning = true;
             }
+            
+            // Clear previous trajectory for the new episode
+            plannedPath.Clear();
+            isPathGenerated = false;
+            currentWaypointIndex = 0;
+
             // Spawn randomly in defined range
             float spawnX = Random.Range(startPosition.x - spawnRadiusX, startPosition.x + spawnRadiusX);
             float spawnZ = Random.Range(startPosition.z - spawnRadiusZ, startPosition.z + spawnRadiusZ);
@@ -79,6 +93,19 @@ namespace UnityStandardAssets.Vehicles.Car{
             rb.angularVelocity = Vector3.zero;
 
             steps = 0;
+
+            // Generate the path immediately from the spawn position if we aren't scanning
+            if (!isLookingForSpot && pathPlanner != null && target != null) {
+                float startYaw = rb.transform.eulerAngles.y;
+                float targetYaw = target.transform.eulerAngles.y;
+                
+                // Calculate the path from the new random spawn position to the target
+                plannedPath = pathPlanner.GeneratePath(rb.transform.position, startYaw, target.transform.position, targetYaw);
+                isPathGenerated = (plannedPath != null && plannedPath.Count > 0);
+                currentWaypointIndex = 0;
+                
+                Debug.Log("Path generated at spawn!");
+            }
         }
 
         public override void Initialize(){
@@ -154,6 +181,15 @@ namespace UnityStandardAssets.Vehicles.Car{
                     predictedSpotSize = PredictedSpace;
                     detectedSpotLocation = new Vector3(transform.position.x, transform.position.y, transform.position.z);
                     Debug.Log("Found spot left");
+
+                    // Generate Hybrid A* Path
+                    if (pathPlanner != null) {
+                        float startYaw = transform.eulerAngles.y;
+                        float targetYaw = target.transform.eulerAngles.y;
+                        plannedPath = pathPlanner.GeneratePath(transform.position, startYaw, target.transform.position, targetYaw);
+                        isPathGenerated = (plannedPath != null && plannedPath.Count > 0);
+                        currentWaypointIndex = 0;
+                    }
                 }
             }
             else if(RightLikelihoodScore == 3){
@@ -168,6 +204,15 @@ namespace UnityStandardAssets.Vehicles.Car{
                     predictedSpotSize = PredictedSpace;
                     detectedSpotLocation = new Vector3(transform.position.x, transform.position.y, transform.position.z);
                     Debug.Log("Found spot right");
+
+                    // Generate Hybrid A* Path
+                    if (pathPlanner != null) {
+                        float startYaw = transform.eulerAngles.y;
+                        float targetYaw = target.transform.eulerAngles.y;
+                        plannedPath = pathPlanner.GeneratePath(transform.position, startYaw, target.transform.position, targetYaw);
+                        isPathGenerated = (plannedPath != null && plannedPath.Count > 0);
+                        currentWaypointIndex = 0;
+                    }
                 }
             }
 
@@ -221,21 +266,6 @@ namespace UnityStandardAssets.Vehicles.Car{
             }
             else if(carController.CurrentSpeed > Speed){
                 carController.Move(0, -0.5f, 0f, 0f);
-            }
-        }
-
-        private void PositionCar(float offsetX){
-            float coveredX = Mathf.Abs(transform.position.x - detectedSpotLocation.x);
-            float absoluteOffsetX = Mathf.Abs(offsetX);
-
-            if(coveredX < absoluteOffsetX && offsetX < 0){
-                carController.Move(0f, -.3f, 0f, 0f);
-            }
-            else if(coveredX < absoluteOffsetX && offsetX > 0){
-                carController.Move(0f, .1f, 0f, 0f);
-            }
-            else{
-                isPositioning = false;
             }
         }
 
@@ -321,6 +351,15 @@ namespace UnityStandardAssets.Vehicles.Car{
                 }
 
             }
+            // end-to-end path planning reward function
+            if (isPathGenerated && currentWaypointIndex < plannedPath.Count) {
+                Vector3 targetWaypoint = plannedPath[currentWaypointIndex];
+                Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
+                
+                // Penalize the agent for straying left or right of the cyan path
+                float crossTrackPenalty = Mathf.Abs(localTarget.x) * 0.05f;
+                reward -= crossTrackPenalty;
+            }
 
             lastPosition = transform.position;
             return reward;            
@@ -352,6 +391,42 @@ namespace UnityStandardAssets.Vehicles.Car{
 
         public override void CollectObservations(VectorSensor sensor){
             sensor.AddObservation(carController.CurrentSpeed);
+
+            // Add Hybrid A* tracking states for SAC to learn corrections
+            if (isPathGenerated && currentWaypointIndex < plannedPath.Count) {
+                Vector3 targetWaypoint = plannedPath[currentWaypointIndex];
+                Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
+
+                sensor.AddObservation(localTarget.x); // crossTrackError
+                sensor.AddObservation(localTarget.z); // distanceToWaypoint
+
+                // // for steering learning
+                // float crossTrackError = localTarget.x;
+                // float distanceToWaypoint = localTarget.z;
+                // reward -= (Mathf.Abs(crossTrackError) * 0.05f);
+                
+                // sensor.AddObservation(crossTrackError);
+                // sensor.AddObservation(distanceToWaypoint);
+            } else {
+                sensor.AddObservation(0f);
+                sensor.AddObservation(0f);
+            }
+        }
+
+        private void UpdateWaypointProgression()
+        {
+            if (!isPathGenerated || plannedPath == null || plannedPath.Count == 0) return;
+            
+            // Don't advance past the final waypoint
+            if (currentWaypointIndex >= plannedPath.Count - 1) return;
+
+            float distanceToWaypoint = Vector3.Distance(transform.position, plannedPath[currentWaypointIndex]);
+            
+            // If within 1.5 meters of the waypoint, target the next one
+            if (distanceToWaypoint < 1.5f)
+            {
+                currentWaypointIndex++;
+            }
         }
 
         public override void OnActionReceived(ActionBuffers actions){
@@ -364,6 +439,20 @@ namespace UnityStandardAssets.Vehicles.Car{
             reverse = (reverse + 1) / 2;
 
             accel = accel - reverse;
+
+            // if(!isLookingForSpot){
+            //     if (isPathGenerated) {
+            //         float baseSteering = CalculateBaselineSteering(); 
+            //         float baseAccel = CalculateBaselineAcceleration();
+
+            //         float finalSteering = Mathf.Clamp(baseSteering + steering, -1f, 1f);
+            //         float finalAccel = Mathf.Clamp(baseAccel + accel, -1f, 1f);
+                    
+            //         carController.Move(finalSteering, finalAccel, 0f, 0f);
+            //     } else {
+            //         carController.Move(steering, accel, 0f, 0f);
+            //     }
+            // }
             
             if(!isLookingForSpot){
                 carController.Move(steering, accel, 0f, 0f);
@@ -375,6 +464,34 @@ namespace UnityStandardAssets.Vehicles.Car{
             AddReward(reward);
         }
 
+        private float CalculateBaselineSteering() 
+        { 
+            if (!isPathGenerated || plannedPath == null || plannedPath.Count == 0) return 0f;
+
+            Vector3 targetWaypoint = plannedPath[currentWaypointIndex];
+            Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
+            
+            // Prevent division by zero
+            if (localTarget.magnitude < 0.1f) return 0f;
+
+            // Pure Pursuit Steering Math: steering_angle = atan2(2 * wheelbase * localTarget.x, lookaheadDistance^2)
+            float lookaheadSq = localTarget.sqrMagnitude;
+            float steeringAngle = Mathf.Atan2(2f * carController.WheelBase * localTarget.x, lookaheadSq) * Mathf.Rad2Deg;
+
+            // Normalize between -1 and 1 for the ML-Agents continuous action space
+            return Mathf.Clamp(steeringAngle / carController.MaxSteeringAngle, -1f, 1f);
+        }
+        
+        private float CalculateBaselineAcceleration() 
+        { 
+            if (!isPathGenerated || plannedPath == null || plannedPath.Count == 0) return 0f;
+            
+            // Determine gear (forward/reverse) based on if the waypoint is in front or behind the car
+            Vector3 localTarget = transform.InverseTransformPoint(plannedPath[currentWaypointIndex]);
+            
+            // Apply gentle baseline throttle
+            return localTarget.z > 0f ? 0.3f : -0.3f; 
+        }
         public override void Heuristic(in ActionBuffers actionsOut)
         {
             ActionSegment<float> continuousActionsOut = actionsOut.ContinuousActions;
@@ -430,10 +547,21 @@ namespace UnityStandardAssets.Vehicles.Car{
                 EndEpisode();
             }
         }
+
+        // Visualize the Hybrid A* path in the Unity Editor
+        private void OnDrawGizmos()
+        {
+            if (!isPathGenerated || plannedPath == null || plannedPath.Count == 0) return;
+
+            Gizmos.color = Color.cyan;
+            for (int i = 0; i < plannedPath.Count; i++)
+            {
+                Gizmos.DrawSphere(plannedPath[i], 0.2f);
+                if (i < plannedPath.Count - 1)
+                {
+                    Gizmos.DrawLine(plannedPath[i], plannedPath[i + 1]);
+                }
+            }
+        }
     }
 }
-
-
-
-
-
