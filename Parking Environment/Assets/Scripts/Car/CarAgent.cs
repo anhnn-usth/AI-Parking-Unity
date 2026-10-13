@@ -44,7 +44,7 @@ namespace UnityStandardAssets.Vehicles.Car{
         // Hybrid A* Integration variables
         [Header("Hybrid A* Integration")]
         public HybridAStarPlanner pathPlanner;
-        private List<Vector3> plannedPath = new List<Vector3>();
+        private List<Pose> plannedPath = new List<Pose>();
         private bool isPathGenerated = false;
         private int currentWaypointIndex = 0;
 
@@ -100,11 +100,9 @@ namespace UnityStandardAssets.Vehicles.Car{
                 float targetYaw = target.transform.eulerAngles.y;
                 
                 // Calculate the path from the new random spawn position to the target
-                plannedPath = pathPlanner.GeneratePath(rb.transform.position, startYaw, target.transform.position, targetYaw);
+                plannedPath = pathPlanner.GeneratePath(transform.position, startYaw, target.transform.position, targetYaw);
                 isPathGenerated = (plannedPath != null && plannedPath.Count > 0);
                 currentWaypointIndex = 0;
-                
-                Debug.Log("Path generated at spawn!");
             }
         }
 
@@ -353,7 +351,7 @@ namespace UnityStandardAssets.Vehicles.Car{
             }
             // end-to-end path planning reward function
             if (isPathGenerated && currentWaypointIndex < plannedPath.Count) {
-                Vector3 targetWaypoint = plannedPath[currentWaypointIndex];
+                Vector3 targetWaypoint = plannedPath[currentWaypointIndex].position;
                 Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
                 
                 // Penalize the agent for straying left or right of the cyan path
@@ -394,7 +392,7 @@ namespace UnityStandardAssets.Vehicles.Car{
 
             // Add Hybrid A* tracking states for SAC to learn corrections
             if (isPathGenerated && currentWaypointIndex < plannedPath.Count) {
-                Vector3 targetWaypoint = plannedPath[currentWaypointIndex];
+                Vector3 targetWaypoint = plannedPath[currentWaypointIndex].position;
                 Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
 
                 sensor.AddObservation(localTarget.x); // crossTrackError
@@ -420,7 +418,7 @@ namespace UnityStandardAssets.Vehicles.Car{
             // Don't advance past the final waypoint
             if (currentWaypointIndex >= plannedPath.Count - 1) return;
 
-            float distanceToWaypoint = Vector3.Distance(transform.position, plannedPath[currentWaypointIndex]);
+            float distanceToWaypoint = Vector3.Distance(transform.position, plannedPath[currentWaypointIndex].position);
             
             // If within 1.5 meters of the waypoint, target the next one
             if (distanceToWaypoint < 1.5f)
@@ -430,6 +428,8 @@ namespace UnityStandardAssets.Vehicles.Car{
         }
 
         public override void OnActionReceived(ActionBuffers actions){
+            UpdateWaypointProgression();
+            
             float steering = actions.ContinuousActions[0];
             float accel = actions.ContinuousActions[1];
             float reverse = actions.ContinuousActions[2];
@@ -468,7 +468,7 @@ namespace UnityStandardAssets.Vehicles.Car{
         { 
             if (!isPathGenerated || plannedPath == null || plannedPath.Count == 0) return 0f;
 
-            Vector3 targetWaypoint = plannedPath[currentWaypointIndex];
+            Vector3 targetWaypoint = plannedPath[currentWaypointIndex].position;
             Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
             
             // Prevent division by zero
@@ -487,7 +487,7 @@ namespace UnityStandardAssets.Vehicles.Car{
             if (!isPathGenerated || plannedPath == null || plannedPath.Count == 0) return 0f;
             
             // Determine gear (forward/reverse) based on if the waypoint is in front or behind the car
-            Vector3 localTarget = transform.InverseTransformPoint(plannedPath[currentWaypointIndex]);
+            Vector3 localTarget = transform.InverseTransformPoint(plannedPath[currentWaypointIndex].position);
             
             // Apply gentle baseline throttle
             return localTarget.z > 0f ? 0.3f : -0.3f; 
@@ -553,15 +553,50 @@ namespace UnityStandardAssets.Vehicles.Car{
         {
             if (!isPathGenerated || plannedPath == null || plannedPath.Count == 0) return;
 
-            Gizmos.color = Color.cyan;
+            Vector3 boxDimensions = (pathPlanner != null && pathPlanner.vehicleSize != Vector3.zero) 
+                ? pathPlanner.vehicleSize 
+                : new Vector3(1.92f, 1.2f, 4.32f);
+
+            // Save initial Gizmos matrix
+            Matrix4x4 defaultMatrix = Gizmos.matrix;
+
             for (int i = 0; i < plannedPath.Count; i++)
             {
-                Gizmos.DrawSphere(plannedPath[i], 0.2f);
+                Pose waypointPose = plannedPath[i];
+
+                // 1. Draw waypoint sphere and trajectory line
+                Gizmos.matrix = defaultMatrix;
+                Gizmos.color = Color.cyan;
+                Gizmos.DrawSphere(waypointPose.position, 0.15f);
+
                 if (i < plannedPath.Count - 1)
                 {
-                    Gizmos.DrawLine(plannedPath[i], plannedPath[i + 1]);
+                    Gizmos.DrawLine(waypointPose.position, plannedPath[i + 1].position);
                 }
+
+                // 2. Draw vehicle bounding footprint at each waypoint
+                // Sample every 2nd or 3rd node if visualization gets too crowded
+                Gizmos.matrix = Matrix4x4.TRS(
+                    waypointPose.position + Vector3.up * (boxDimensions.y / 2f), 
+                    waypointPose.rotation, 
+                    Vector3.one
+                );
+
+                // Highlight the current targeted waypoint in yellow, others in transparent green
+                if (i == currentWaypointIndex)
+                {
+                    Gizmos.color = Color.yellow;
+                }
+                else
+                {
+                    Gizmos.color = new Color(0f, 1f, 0.4f, 0.35f);
+                }
+
+                Gizmos.DrawWireCube(Vector3.zero, boxDimensions);
             }
-        }
+
+            // Restore matrix
+            Gizmos.matrix = defaultMatrix;
+}
     }
 }

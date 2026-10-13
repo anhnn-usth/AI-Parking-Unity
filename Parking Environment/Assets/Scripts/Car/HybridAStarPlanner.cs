@@ -75,27 +75,25 @@ public class HybridAStarPlanner : MonoBehaviour
     {
         if (carController == null) return;
 
-        // Fetch the primary Box Collider (the body)
         BoxCollider bodyCollider = carController.GetComponentInChildren<BoxCollider>();
         
         if (bodyCollider != null)
         {
-            // Multiply the local BoxCollider size by the body's local scale (100x)
-            // This guarantees X is always width and Z is always length, regardless of spawn rotation
-            vehicleSize = new Vector3(
-                Mathf.Abs(bodyCollider.size.x * bodyCollider.transform.localScale.x),
-                Mathf.Abs(bodyCollider.size.y * bodyCollider.transform.localScale.y),
-                Mathf.Abs(bodyCollider.size.z * bodyCollider.transform.localScale.z)
-            );
+            float exactWidth = Mathf.Abs(bodyCollider.size.x * bodyCollider.transform.localScale.x);
+            float exactHeight = Mathf.Abs(bodyCollider.size.y * bodyCollider.transform.localScale.y);
+            float exactLength = Mathf.Abs(bodyCollider.size.z * bodyCollider.transform.localScale.z);
+            
+            // Add 0.4m safety margin to force the path clear of parked car corners
+            float margin = 0.4f;
+            vehicleSize = new Vector3(exactWidth + margin, exactHeight, exactLength + margin);
         }
         else
         {
-            // Safe fallback if the collider isn't found
-            vehicleSize = new Vector3(1.92f, 1.2f, 4.32f); 
+            vehicleSize = new Vector3(1.92f + 0.4f, 1.2f, 4.32f + 0.4f); 
         }
     }
 
-    public List<Vector3> GeneratePath(Vector3 startPos, float startYaw, Vector3 targetPos, float targetYaw)
+    public List<Pose> GeneratePath(Vector3 startPos, float startYaw, Vector3 targetPos, float targetYaw)
     {
         MinHeap<HybridNode> openSet = new MinHeap<HybridNode>();
         HashSet<string> closedSet = new HashSet<string>();
@@ -120,12 +118,11 @@ public class HybridAStarPlanner : MonoBehaviour
             
             CalculateDynamicVehicleSize();
         
-            Debug.Log($"Hybrid A* Kinematics Loaded: WheelBase = {wheelBase}, MaxSteering = {maxSteeringAngle}, VehicleSize = {vehicleSize}");
         }
         else
         {
             Debug.LogError("CarController not assigned to HybridAStarPlanner!");
-            return new List<Vector3>();
+            return new List<Pose>();
         }
 
         float[] steeringAngles = { -maxSteeringAngle, 0, maxSteeringAngle };
@@ -141,10 +138,10 @@ public class HybridAStarPlanner : MonoBehaviour
             closedSet.Add(stateKey);
 
             // Goal Tolerance Check (Translational and Rotational)
-            if (Vector3.Distance(current.Position, targetPos) < 1.0f && Mathf.Abs(Mathf.DeltaAngle(current.Yaw, targetYaw)) < 15f)
-            {
-                return ReconstructPath(current);
-            }
+            if (Vector3.Distance(current.Position, targetPos) < 2.5f && Mathf.Abs(Mathf.DeltaAngle(current.Yaw, targetYaw)) < 35f)
+                {
+                    return ReconstructPath(current);
+                }
 
             // Kinematic Expansion
             foreach (int dir in directions)
@@ -183,7 +180,7 @@ public class HybridAStarPlanner : MonoBehaviour
         }
 
         Debug.LogWarning($"Hybrid A* Failed: Reached {iterations} iterations without finding target.");
-        return new List<Vector3>();
+        return new List<Pose>();
     }
 
     private float CalculateHeuristic(Vector3 pos, float yaw, Vector3 targetPos, float targetYaw)
@@ -198,22 +195,27 @@ public class HybridAStarPlanner : MonoBehaviour
 
     private bool IsCollision(Vector3 pos, float yaw)
     {
-        // 3D Bounding Box check. Align the bounding box with the vehicle's yaw.
+        // If the root transform is at the ground or rear axle, offset to the true center
+        Vector3 boxCenter = pos + Vector3.up * (vehicleSize.y / 2f);
+
         Collider[] hitColliders = Physics.OverlapBox(
-            pos + Vector3.up * (vehicleSize.y / 2f), 
-            vehicleSize / 2f, 
+            boxCenter, 
+            vehicleSize / 2f, // Half-extents
             Quaternion.Euler(0, yaw, 0), 
-            obstacleLayer
+            obstacleLayer,
+            QueryTriggerInteraction.Ignore
         );
+
         return hitColliders.Length > 0;
     }
 
-    private List<Vector3> ReconstructPath(HybridNode node)
+    private List<Pose> ReconstructPath(HybridNode node)
     {
-        List<Vector3> path = new List<Vector3>();
+        List<Pose> path = new List<Pose>();
         while (node != null)
         {
-            path.Add(node.Position);
+            // Store both position and vehicle orientation at this node
+            path.Add(new Pose(node.Position, Quaternion.Euler(0f, node.Yaw, 0f)));
             node = node.Parent;
         }
         path.Reverse();

@@ -485,6 +485,10 @@ PrefabInstance:
       value: 
       objectReference: {fileID: 7081647502720175134}
     - target: {fileID: 4391216934180027277, guid: 9e7c5a6ee4f92384baf355df493c1f80, type: 3}
+      propertyPath: pathPlanner
+      value: 
+      objectReference: {fileID: 4234532902657611759}
+    - target: {fileID: 4391216934180027277, guid: 9e7c5a6ee4f92384baf355df493c1f80, type: 3}
       propertyPath: spawnRadiusX
       value: 10
       objectReference: {fileID: 0}
@@ -549,6 +553,10 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5532211428068986616, guid: 9e7c5a6ee4f92384baf355df493c1f80, type: 3}
+      propertyPath: m_RayLayerMask.m_Bits
+      value: 65
+      objectReference: {fileID: 0}
+    - target: {fileID: 5532211428068986616, guid: 9e7c5a6ee4f92384baf355df493c1f80, type: 3}
       propertyPath: m_DetectableTags.Array.size
       value: 3
       objectReference: {fileID: 0}
@@ -571,13 +579,52 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 4391216934180027278, guid: 9e7c5a6ee4f92384baf355df493c1f80, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 4234532902657611759}
   m_SourcePrefab: {fileID: 100100000, guid: 9e7c5a6ee4f92384baf355df493c1f80, type: 3}
+--- !u!1 &2573131914687906486 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 4391216934180027278, guid: 9e7c5a6ee4f92384baf355df493c1f80, type: 3}
+  m_PrefabInstance: {fileID: 2253248277754116408}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &4234532902657611759
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2573131914687906486}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7ec6f312d10403ccbbb82a8ceb656ac4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HybridAStarPlanner
+  carController: {fileID: 2573131914695014206}
+  stepSize: 0.5
+  xyResolution: 0.5
+  yawResolution: 5
+  obstacleLayer:
+    serializedVersion: 2
+    m_Bits: 64
+  vehicleSize: {x: 0, y: 0, z: 0}
 --- !u!4 &2573131914688208590 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 4391216934180186102, guid: 9e7c5a6ee4f92384baf355df493c1f80, type: 3}
   m_PrefabInstance: {fileID: 2253248277754116408}
   m_PrefabAsset: {fileID: 0}
+--- !u!114 &2573131914695014206 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 4391216934186028550, guid: 9e7c5a6ee4f92384baf355df493c1f80, type: 3}
+  m_PrefabInstance: {fileID: 2253248277754116408}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2573131914687906486}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3ea65b38d485c374caa584a03f1de571, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1001 &2283002674583351379
 PrefabInstance:
   m_ObjectHideFlags: 0
