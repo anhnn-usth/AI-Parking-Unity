@@ -22,6 +22,13 @@ namespace UnityStandardAssets.Vehicles.Car{
         public bool cameraGrayScale = false;
         public SensorCompressionType sensorCompressionType = SensorCompressionType.PNG;
 
+        [Header("Hybrid A* Guidance")]
+        public HybridAStarPlanner pathPlanner;
+        public int lookAheadWaypoints = 3; // Number of waypoints to feed to SAC
+        private List<Vector3> guidancePath = new List<Vector3>();
+        private int currentWaypointIndex = 0;
+        private bool pathGenerated = false;
+
         private CarController carController;
         EnvironmentParameters defaultParameters;
         private Rigidbody rb;
@@ -54,6 +61,13 @@ namespace UnityStandardAssets.Vehicles.Car{
 
             // Get desicion from python by requesting the next action
             if(!isLookingForSpot){
+                // Generate the Hybrid A* path once right before SAC takes over control
+                if (!pathGenerated && pathPlanner != null) {
+                    guidancePath = pathPlanner.GeneratePath(transform.position, transform.eulerAngles.y, target.transform.position, target.transform.eulerAngles.y);
+                    currentWaypointIndex = 0;
+                    pathGenerated = true;
+                }
+
                 RequestDecision();
                 // If agent get's too par from it's target, stop the episode and reset the agent
                 if(Mathf.Abs(transform.position.x - target.transform.position.x) > envRadiusX || Mathf.Abs(transform.position.z - target.transform.position.z) > envRadiusZ){
@@ -68,6 +82,12 @@ namespace UnityStandardAssets.Vehicles.Car{
                 isLookingForSpot = true;
                 isPositioning = false;
             }
+
+            // Reset Hybrid A* states
+            pathGenerated = false;
+            guidancePath?.Clear();
+            currentWaypointIndex = 0;
+
             // Spawn randomly in defined range
             float spawnX = Random.Range(startPosition.x - spawnRadiusX, startPosition.x + spawnRadiusX);
             float spawnZ = Random.Range(startPosition.z - spawnRadiusZ, startPosition.z + spawnRadiusZ);
@@ -147,7 +167,7 @@ namespace UnityStandardAssets.Vehicles.Car{
                 // Distances are in normalised units, so multiply by the ray length to get the actual distance
                 PredictedSpace *= 7;
                 
-
+                
                 if(PredictedSpace > 3f){
                     isLookingForSpot = false;
                     isPositioning = true;
@@ -296,6 +316,22 @@ namespace UnityStandardAssets.Vehicles.Car{
                 reward += totDirectionChangeReward + totDistanceReward;
             }
 
+            // --- Hybrid A* Path Tracking Reward ---
+            if (pathGenerated && guidancePath.Count > 0 && currentWaypointIndex < guidancePath.Count)
+            {
+                float distToCurrentWp = Vector3.Distance(transform.position, guidancePath[currentWaypointIndex]);
+                
+                // Advance waypoint index if car gets close enough to the active waypoint
+                if (distToCurrentWp < 1.5f && currentWaypointIndex < guidancePath.Count - 1)
+                {
+                    currentWaypointIndex++;
+                }
+
+                // Dense reward inversely proportional to cross-track distance error
+                float pathTrackingReward = 1.0f / (1.0f + distToCurrentWp);
+                reward += pathTrackingReward * 0.05f;
+            }
+
             if(inTarget){
                 float angleToTarget = Vector3.Angle(transform.forward, target.transform.forward);
                 // When driving in the spot backwards, the angle to target is 180 degrees
@@ -352,6 +388,28 @@ namespace UnityStandardAssets.Vehicles.Car{
 
         public override void CollectObservations(VectorSensor sensor){
             sensor.AddObservation(carController.CurrentSpeed);
+
+            // Feed upcoming Hybrid A* waypoints (relative to car position)
+            int addedWaypoints = 0;
+            if (pathGenerated && guidancePath != null && guidancePath.Count > 0)
+            {
+                for (int i = 0; i < lookAheadWaypoints; i++)
+                {
+                    int idx = Mathf.Min(currentWaypointIndex + i, guidancePath.Count - 1);
+                    Vector3 relativeWaypoint = transform.InverseTransformPoint(guidancePath[idx]);
+                    
+                    sensor.AddObservation(relativeWaypoint.x);
+                    sensor.AddObservation(relativeWaypoint.z);
+                    addedWaypoints++;
+                }
+            }
+
+            // Pad remaining vector space with zeros if path length is shorter than look-ahead count
+            for (int i = addedWaypoints; i < lookAheadWaypoints; i++)
+            {
+                sensor.AddObservation(0f);
+                sensor.AddObservation(0f);
+            }
         }
 
         public override void OnActionReceived(ActionBuffers actions){
