@@ -27,8 +27,6 @@ namespace UnityStandardAssets.Vehicles.Car{
         public bool useAdaptiveCurriculum = true;
         public int currentCurriculumLevel = 1;
         public int maxCurriculumLevel = 3;
-        public int requiredSuccessesToAdvance = 5;
-        private int consecutiveSuccesses = 0;
         private int maxSpawnAttempts = 15;
 
         private CarController carController;
@@ -75,6 +73,9 @@ namespace UnityStandardAssets.Vehicles.Car{
             }
 
             bool validSpawnFound = false;
+
+            // Fetch the phase level pushed by the Python CurriculumPhaseCallback
+            currentCurriculumLevel = (int)defaultParameters.GetWithDefault("curriculum_level", 1.0f);
 
             if (useAdaptiveCurriculum && pathPlanner != null && !isLookingForSpot)
             {
@@ -130,16 +131,12 @@ namespace UnityStandardAssets.Vehicles.Car{
         public override void Initialize(){
             carController = GetComponent<CarController>();
             rb = GetComponent<Rigidbody>();
-
             isLookingForSpot = findParkingSpot;
-
             RayPerceptionSensorComponent = GetComponent<RayPerceptionSensorComponent3D>();
-
-            defaultParameters = Academy.Instance.EnvironmentParameters;
+            defaultParameters = Academy.Instance.EnvironmentParameters; // Ensures parameters are ready
             
             startPosition = transform.position;
             startRotation = transform.rotation;
-            
             lastPosition = startPosition;
 
             Reset();
@@ -208,19 +205,11 @@ namespace UnityStandardAssets.Vehicles.Car{
 
         private void HandleSuccess()
         {
-            consecutiveSuccesses++;
-            if (consecutiveSuccesses >= requiredSuccessesToAdvance && currentCurriculumLevel < maxCurriculumLevel)
-            {
-                currentCurriculumLevel++;
-                consecutiveSuccesses = 0;
-                Debug.Log($"Curriculum Level Increased to {currentCurriculumLevel}");
-            }
             EndEpisode();
         }
 
         private void HandleFailure()
         {
-            consecutiveSuccesses = Mathf.Max(0, consecutiveSuccesses - 1);
             EndEpisode();
         }
 
@@ -304,6 +293,7 @@ namespace UnityStandardAssets.Vehicles.Car{
             {
                 AddReward(-10f);
                 HandleFailure();
+                Debug.Log("Wall!");
             }
         }
 
@@ -318,6 +308,7 @@ namespace UnityStandardAssets.Vehicles.Car{
                 float reward = -Mathf.Abs(carController.CurrentSpeed) * 50f - 5f;
                 AddReward(reward);
                 HandleFailure();
+                Debug.Log("Car!");
             }
         }
     }

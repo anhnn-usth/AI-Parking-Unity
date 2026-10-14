@@ -240,7 +240,10 @@ public class HybridAStarPlanner : MonoBehaviour
             Gizmos.DrawLine(lastGeneratedPath[i].position, lastGeneratedPath[i + 1].position);
         }
 
-        Vector3 size = vehicleSize != Vector3.zero ? vehicleSize : new Vector3(2f, 1f, 4f);
+        // Subtract the 0.4f safety margin (X and Z) used for collision so the gizmo matches the real car
+        Vector3 visualSize = vehicleSize != Vector3.zero ? 
+            new Vector3(vehicleSize.x - 0.4f, vehicleSize.y, vehicleSize.z - 0.4f) : 
+            new Vector3(1.92f, 1.2f, 4.32f);
         
         // Sample poses to prevent screen clutter (draws max ~15 poses along the path)
         int step = Mathf.Max(1, lastGeneratedPath.Count / 15); 
@@ -250,15 +253,15 @@ public class HybridAStarPlanner : MonoBehaviour
             Pose pose = lastGeneratedPath[i];
             
             // Apply the transformation matrix for the specific pose
-            Gizmos.matrix = Matrix4x4.TRS(pose.position + Vector3.up * (size.y / 2f), pose.rotation, Vector3.one);
+            Gizmos.matrix = Matrix4x4.TRS(pose.position + Vector3.up * (visualSize.y / 2f), pose.rotation, Vector3.one);
             
-            // Draw vehicle bounding box
+            // Draw true vehicle bounding box
             Gizmos.color = new Color(0f, 1f, 1f, 0.4f); // Cyan
-            Gizmos.DrawWireCube(Vector3.zero, size);
+            Gizmos.DrawWireCube(Vector3.zero, visualSize);
             
             // Draw forward direction vector
             Gizmos.color = Color.red;
-            Gizmos.DrawLine(Vector3.zero, Vector3.forward * (size.z / 2f));
+            Gizmos.DrawLine(Vector3.zero, Vector3.forward * (visualSize.z / 2f));
         }
         
         // Reset matrix to avoid affecting other gizmos
