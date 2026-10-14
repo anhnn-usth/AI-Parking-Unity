@@ -171,7 +171,7 @@ namespace UnityStandardAssets.Vehicles.Car{
                 float PredictedSpace = (RpMeasurements.RDistL[1] * Mathf.Cos(60*Mathf.Deg2Rad)) + (RpMeasurements.RDistL[3] * Mathf.Cos(60*Mathf.Deg2Rad));
                 // Distances are in normalised units, so multiply by the ray length to get the actual distance
                 PredictedSpace *= 7;
-                
+
 
                 if(PredictedSpace > 3f){
                     isLookingForSpot = false;
@@ -347,16 +347,6 @@ namespace UnityStandardAssets.Vehicles.Car{
                     reward += 100f;
                     EndEpisode();
                 }
-
-            }
-            // end-to-end path planning reward function
-            if (isPathGenerated && currentWaypointIndex < plannedPath.Count) {
-                Vector3 targetWaypoint = plannedPath[currentWaypointIndex].position;
-                Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
-                
-                // Penalize the agent for straying left or right of the cyan path
-                float crossTrackPenalty = Mathf.Abs(localTarget.x) * 0.05f;
-                reward -= crossTrackPenalty;
             }
 
             lastPosition = transform.position;
@@ -397,14 +387,6 @@ namespace UnityStandardAssets.Vehicles.Car{
 
                 sensor.AddObservation(localTarget.x); // crossTrackError
                 sensor.AddObservation(localTarget.z); // distanceToWaypoint
-
-                // // for steering learning
-                // float crossTrackError = localTarget.x;
-                // float distanceToWaypoint = localTarget.z;
-                // reward -= (Mathf.Abs(crossTrackError) * 0.05f);
-                
-                // sensor.AddObservation(crossTrackError);
-                // sensor.AddObservation(distanceToWaypoint);
             } else {
                 sensor.AddObservation(0f);
                 sensor.AddObservation(0f);
@@ -439,20 +421,6 @@ namespace UnityStandardAssets.Vehicles.Car{
             reverse = (reverse + 1) / 2;
 
             accel = accel - reverse;
-
-            // if(!isLookingForSpot){
-            //     if (isPathGenerated) {
-            //         float baseSteering = CalculateBaselineSteering(); 
-            //         float baseAccel = CalculateBaselineAcceleration();
-
-            //         float finalSteering = Mathf.Clamp(baseSteering + steering, -1f, 1f);
-            //         float finalAccel = Mathf.Clamp(baseAccel + accel, -1f, 1f);
-                    
-            //         carController.Move(finalSteering, finalAccel, 0f, 0f);
-            //     } else {
-            //         carController.Move(steering, accel, 0f, 0f);
-            //     }
-            // }
             
             if(!isLookingForSpot){
                 carController.Move(steering, accel, 0f, 0f);
@@ -464,34 +432,6 @@ namespace UnityStandardAssets.Vehicles.Car{
             AddReward(reward);
         }
 
-        private float CalculateBaselineSteering() 
-        { 
-            if (!isPathGenerated || plannedPath == null || plannedPath.Count == 0) return 0f;
-
-            Vector3 targetWaypoint = plannedPath[currentWaypointIndex].position;
-            Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
-            
-            // Prevent division by zero
-            if (localTarget.magnitude < 0.1f) return 0f;
-
-            // Pure Pursuit Steering Math: steering_angle = atan2(2 * wheelbase * localTarget.x, lookaheadDistance^2)
-            float lookaheadSq = localTarget.sqrMagnitude;
-            float steeringAngle = Mathf.Atan2(2f * carController.WheelBase * localTarget.x, lookaheadSq) * Mathf.Rad2Deg;
-
-            // Normalize between -1 and 1 for the ML-Agents continuous action space
-            return Mathf.Clamp(steeringAngle / carController.MaxSteeringAngle, -1f, 1f);
-        }
-        
-        private float CalculateBaselineAcceleration() 
-        { 
-            if (!isPathGenerated || plannedPath == null || plannedPath.Count == 0) return 0f;
-            
-            // Determine gear (forward/reverse) based on if the waypoint is in front or behind the car
-            Vector3 localTarget = transform.InverseTransformPoint(plannedPath[currentWaypointIndex].position);
-            
-            // Apply gentle baseline throttle
-            return localTarget.z > 0f ? 0.3f : -0.3f; 
-        }
         public override void Heuristic(in ActionBuffers actionsOut)
         {
             ActionSegment<float> continuousActionsOut = actionsOut.ContinuousActions;
@@ -553,8 +493,9 @@ namespace UnityStandardAssets.Vehicles.Car{
         {
             if (!isPathGenerated || plannedPath == null || plannedPath.Count == 0) return;
 
+            // Subtract 0.4f safety margin to match true vehicle size
             Vector3 boxDimensions = (pathPlanner != null && pathPlanner.vehicleSize != Vector3.zero) 
-                ? pathPlanner.vehicleSize 
+                ? new Vector3(pathPlanner.vehicleSize.x - 0.4f, pathPlanner.vehicleSize.y, pathPlanner.vehicleSize.z - 0.4f)
                 : new Vector3(1.92f, 1.2f, 4.32f);
 
             // Save initial Gizmos matrix
@@ -597,6 +538,6 @@ namespace UnityStandardAssets.Vehicles.Car{
 
             // Restore matrix
             Gizmos.matrix = defaultMatrix;
-}
+        }
     }
 }
