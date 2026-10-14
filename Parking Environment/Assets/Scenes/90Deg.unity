@@ -154,6 +154,7 @@ MonoBehaviour:
   obstacleLayer:
     serializedVersion: 2
     m_Bits: 64
+  drawPathGizmos: 1
   vehicleSize: {x: 2, y: 1, z: 4.5}
 --- !u!1001 &41691682
 PrefabInstance:
@@ -4528,6 +4529,10 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2573131914687906485, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
+      propertyPath: currentCurriculumLevel
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 2573131914687906485, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
       propertyPath: 'carCameras.Array.data[0]'
       value: 
       objectReference: {fileID: 6017787276683058573}
@@ -4729,7 +4734,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8268270515027760545, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
       propertyPath: m_BrainParameters.VectorObservationSize
-      value: 3
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 8268270515027760545, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
       propertyPath: m_BrainParameters.NumStackedVectorObservations

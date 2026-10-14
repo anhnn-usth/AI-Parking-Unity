@@ -20,13 +20,25 @@ public class HybridAStarPlanner : MonoBehaviour
     [Header("Environment & Collision")]
     public LayerMask obstacleLayer;
 
+    [Header("Debug & Visualization")]
+    public bool drawPathGizmos = true;
+    private List<Pose> lastGeneratedPath;
+
     [HideInInspector]
     public Vector3 vehicleSize;
+
+    public class PathAssessment
+    {
+        public bool IsFeasible;
+        public List<Pose> Path;
+        public int GearShifts;
+        public float PathLength;
+    }
 
     public class HybridNode : IComparable<HybridNode>
     {
         public Vector3 Position;
-        public float Yaw; // Degrees
+        public float Yaw; 
         public float GCost;
         public float FCost;
         public HybridNode Parent;
@@ -45,7 +57,6 @@ public class HybridAStarPlanner : MonoBehaviour
             IsReverse = isReverse;
             Steering = steering;
 
-            // Discretize continuous state into a 3D grid index to prevent infinite loops
             gridX = Mathf.RoundToInt(pos.x / xyRes);
             gridZ = Mathf.RoundToInt(pos.z / xyRes);
             
@@ -83,7 +94,6 @@ public class HybridAStarPlanner : MonoBehaviour
             float exactHeight = Mathf.Abs(bodyCollider.size.y * bodyCollider.transform.localScale.y);
             float exactLength = Mathf.Abs(bodyCollider.size.z * bodyCollider.transform.localScale.z);
             
-            // Add 0.4m safety margin to force the path clear of parked car corners
             float margin = 0.4f;
             vehicleSize = new Vector3(exactWidth + margin, exactHeight, exactLength + margin);
         }
@@ -93,8 +103,9 @@ public class HybridAStarPlanner : MonoBehaviour
         }
     }
 
-    public List<Pose> GeneratePath(Vector3 startPos, float startYaw, Vector3 targetPos, float targetYaw)
+    public PathAssessment EvaluatePath(Vector3 startPos, float startYaw, Vector3 targetPos, float targetYaw)
     {
+        PathAssessment assessment = new PathAssessment { IsFeasible = false, Path = new List<Pose>(), GearShifts = 0, PathLength = 0f };
         MinHeap<HybridNode> openSet = new MinHeap<HybridNode>();
         HashSet<string> closedSet = new HashSet<string>();
 
@@ -113,20 +124,17 @@ public class HybridAStarPlanner : MonoBehaviour
             if (wheelBase <= 0.1f) 
             {
                 wheelBase = 2.5f;
-                Debug.LogWarning("WheelBase was 0. Using fallback of 2.5f.");
             }
-            
             CalculateDynamicVehicleSize();
-        
         }
         else
         {
             Debug.LogError("CarController not assigned to HybridAStarPlanner!");
-            return new List<Pose>();
+            return assessment;
         }
 
         float[] steeringAngles = { -maxSteeringAngle, 0, maxSteeringAngle };
-        int[] directions = { 1, -1 }; // 1 = forward, -1 = reverse
+        int[] directions = { 1, -1 };
 
         while (openSet.Count > 0 && iterations < maxIterations)
         {
@@ -137,34 +145,30 @@ public class HybridAStarPlanner : MonoBehaviour
             if (closedSet.Contains(stateKey)) continue;
             closedSet.Add(stateKey);
 
-            // Goal Tolerance Check (Translational and Rotational)
             if (Vector3.Distance(current.Position, targetPos) < 2.5f && Mathf.Abs(Mathf.DeltaAngle(current.Yaw, targetYaw)) < 35f)
-                {
-                    return ReconstructPath(current);
-                }
+            {
+                assessment = ReconstructPathAndMetrics(current);
+                lastGeneratedPath = assessment.Path; // Cache for Gizmos
+                return assessment;
+            }
 
-            // Kinematic Expansion
             foreach (int dir in directions)
             {
                 foreach (float steer in steeringAngles)
                 {
-                    // Apply Bicycle Model kinematics
                     float distance = dir * stepSize;
                     float deltaYaw = (distance / wheelBase) * Mathf.Tan(steer * Mathf.Deg2Rad) * Mathf.Rad2Deg;
-                    
                     float nextYaw = current.Yaw + deltaYaw;
-                    // Note: Unity coordinates. X is right/left, Z is forward/back
                     Vector3 nextPos = current.Position + new Vector3(Mathf.Sin(nextYaw * Mathf.Deg2Rad), 0, Mathf.Cos(nextYaw * Mathf.Deg2Rad)) * distance;
 
                     if (IsCollision(nextPos, nextYaw)) continue;
 
-                    // Cost Calculation
                     bool isReverse = dir < 0;
                     float moveCost = stepSize;
                     
-                    if (isReverse) moveCost *= 1.5f; // Penalize driving backward
-                    if (current.IsReverse != isReverse) moveCost *= 2.0f; // Penalize gear shifting
-                    if (Mathf.Abs(steer) > 0) moveCost *= 1.2f; // Penalize steering to encourage straight lines
+                    if (isReverse) moveCost *= 1.5f; 
+                    if (current.IsReverse != isReverse) moveCost *= 2.0f; 
+                    if (Mathf.Abs(steer) > 0) moveCost *= 1.2f; 
 
                     float gCost = current.GCost + moveCost;
                     float hCost = CalculateHeuristic(nextPos, nextYaw, targetPos, targetYaw);
@@ -179,55 +183,92 @@ public class HybridAStarPlanner : MonoBehaviour
             }
         }
 
-        Debug.LogWarning($"Hybrid A* Failed: Reached {iterations} iterations without finding target.");
-        return new List<Pose>();
+        lastGeneratedPath = null; // Clear if no path found
+        return assessment; 
     }
 
     private float CalculateHeuristic(Vector3 pos, float yaw, Vector3 targetPos, float targetYaw)
     {
-        // Base Euclidean distance
         float distance = Vector3.Distance(pos, targetPos);
         float angleDiff = Mathf.Abs(Mathf.DeltaAngle(yaw, targetYaw));
-        
-        // Combine translational distance and heading alignment
         return distance + (angleDiff * 0.05f); 
     }
 
     private bool IsCollision(Vector3 pos, float yaw)
     {
-        // If the root transform is at the ground or rear axle, offset to the true center
         Vector3 boxCenter = pos + Vector3.up * (vehicleSize.y / 2f);
-
         Collider[] hitColliders = Physics.OverlapBox(
             boxCenter, 
-            vehicleSize / 2f, // Half-extents
+            vehicleSize / 2f, 
             Quaternion.Euler(0, yaw, 0), 
             obstacleLayer,
             QueryTriggerInteraction.Ignore
         );
-
         return hitColliders.Length > 0;
     }
 
-    private List<Pose> ReconstructPath(HybridNode node)
+    private PathAssessment ReconstructPathAndMetrics(HybridNode node)
     {
-        List<Pose> path = new List<Pose>();
+        PathAssessment assessment = new PathAssessment { IsFeasible = true, Path = new List<Pose>() };
+        
         while (node != null)
         {
-            // Store both position and vehicle orientation at this node
-            path.Add(new Pose(node.Position, Quaternion.Euler(0f, node.Yaw, 0f)));
+            assessment.Path.Add(new Pose(node.Position, Quaternion.Euler(0f, node.Yaw, 0f)));
+            
+            if (node.Parent != null)
+            {
+                assessment.PathLength += Vector3.Distance(node.Position, node.Parent.Position);
+                if (node.IsReverse != node.Parent.IsReverse)
+                {
+                    assessment.GearShifts++;
+                }
+            }
             node = node.Parent;
         }
-        path.Reverse();
-        return path;
+        assessment.Path.Reverse();
+        return assessment;
+    }
+
+    private void OnDrawGizmos()
+    {
+        if (!drawPathGizmos || lastGeneratedPath == null || lastGeneratedPath.Count == 0) return;
+
+        // Draw the path line
+        Gizmos.color = Color.green;
+        for (int i = 0; i < lastGeneratedPath.Count - 1; i++)
+        {
+            Gizmos.DrawLine(lastGeneratedPath[i].position, lastGeneratedPath[i + 1].position);
+        }
+
+        Vector3 size = vehicleSize != Vector3.zero ? vehicleSize : new Vector3(2f, 1f, 4f);
+        
+        // Sample poses to prevent screen clutter (draws max ~15 poses along the path)
+        int step = Mathf.Max(1, lastGeneratedPath.Count / 15); 
+
+        for (int i = 0; i < lastGeneratedPath.Count; i += step)
+        {
+            Pose pose = lastGeneratedPath[i];
+            
+            // Apply the transformation matrix for the specific pose
+            Gizmos.matrix = Matrix4x4.TRS(pose.position + Vector3.up * (size.y / 2f), pose.rotation, Vector3.one);
+            
+            // Draw vehicle bounding box
+            Gizmos.color = new Color(0f, 1f, 1f, 0.4f); // Cyan
+            Gizmos.DrawWireCube(Vector3.zero, size);
+            
+            // Draw forward direction vector
+            Gizmos.color = Color.red;
+            Gizmos.DrawLine(Vector3.zero, Vector3.forward * (size.z / 2f));
+        }
+        
+        // Reset matrix to avoid affecting other gizmos
+        Gizmos.matrix = Matrix4x4.identity;
     }
 }
 
-// Custom Priority Queue for fast O(log n) node extraction
 public class MinHeap<T> where T : IComparable<T>
 {
     private List<T> elements = new List<T>();
-
     public int Count => elements.Count;
 
     public void Add(T item)
@@ -239,16 +280,10 @@ public class MinHeap<T> where T : IComparable<T>
     public T ExtractMin()
     {
         if (elements.Count == 0) throw new InvalidOperationException("Heap is empty");
-        
         T min = elements[0];
         elements[0] = elements[elements.Count - 1];
         elements.RemoveAt(elements.Count - 1);
-        
-        if (elements.Count > 0)
-        {
-            HeapifyDown(0);
-        }
-        
+        if (elements.Count > 0) HeapifyDown(0);
         return min;
     }
 
@@ -271,12 +306,8 @@ public class MinHeap<T> where T : IComparable<T>
             int leftChild = 2 * index + 1;
             int rightChild = 2 * index + 2;
 
-            if (leftChild < elements.Count && elements[leftChild].CompareTo(elements[smallest]) < 0)
-                smallest = leftChild;
-
-            if (rightChild < elements.Count && elements[rightChild].CompareTo(elements[smallest]) < 0)
-                smallest = rightChild;
-
+            if (leftChild < elements.Count && elements[leftChild].CompareTo(elements[smallest]) < 0) smallest = leftChild;
+            if (rightChild < elements.Count && elements[rightChild].CompareTo(elements[smallest]) < 0) smallest = rightChild;
             if (smallest == index) break;
 
             Swap(index, smallest);
