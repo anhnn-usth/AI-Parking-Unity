@@ -138,8 +138,7 @@ public class HybridAStarPlanner : MonoBehaviour
             closedSet.Add(stateKey);
 
             // Goal Tolerance Check (Translational and Rotational)
-            if (Vector3.Distance(current.Position, targetPos) < 2.5f && Mathf.Abs(Mathf.DeltaAngle(current.Yaw, targetYaw)) < 35f)
-                {
+            if (Vector3.Distance(current.Position, targetPos) < 0.8f && Mathf.Abs(Mathf.DeltaAngle(current.Yaw, targetYaw)) < 7.5f)                {
                     return ReconstructPath(current);
                 }
 
