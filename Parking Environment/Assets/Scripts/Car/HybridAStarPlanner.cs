@@ -145,7 +145,7 @@ public class HybridAStarPlanner : MonoBehaviour
             if (closedSet.Contains(stateKey)) continue;
             closedSet.Add(stateKey);
 
-            if (Vector3.Distance(current.Position, targetPos) < 2.5f && Mathf.Abs(Mathf.DeltaAngle(current.Yaw, targetYaw)) < 35f)
+            if (Vector3.Distance(current.Position, targetPos) < 0.8f && Mathf.Abs(Mathf.DeltaAngle(current.Yaw, targetYaw)) < 7.5f)
             {
                 assessment = ReconstructPathAndMetrics(current);
                 lastGeneratedPath = assessment.Path; // Cache for Gizmos

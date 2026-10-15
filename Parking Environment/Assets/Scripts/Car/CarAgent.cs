@@ -27,7 +27,7 @@ namespace UnityStandardAssets.Vehicles.Car{
         public bool useAdaptiveCurriculum = true;
         public int currentCurriculumLevel = 1;
         public int maxCurriculumLevel = 3;
-        private int maxSpawnAttempts = 15;
+        private int maxSpawnAttempts = 50;
 
         private CarController carController;
         EnvironmentParameters defaultParameters;
@@ -73,51 +73,49 @@ namespace UnityStandardAssets.Vehicles.Car{
             }
 
             bool validSpawnFound = false;
+            Vector3 fallbackPos = startPosition; 
+            float fallbackYaw = startRotation.eulerAngles.y;
 
             // Fetch the phase level pushed by the Python CurriculumPhaseCallback
             currentCurriculumLevel = (int)defaultParameters.GetWithDefault("curriculum_level", 1.0f);
 
             if (useAdaptiveCurriculum && pathPlanner != null && !isLookingForSpot)
-            {
-                for (int i = 0; i < maxSpawnAttempts; i++)
                 {
-                    float spawnX = Random.Range(startPosition.x - spawnRadiusX, startPosition.x + spawnRadiusX);
-                    float spawnZ = Random.Range(startPosition.z - spawnRadiusZ, startPosition.z + spawnRadiusZ);
-                    float spawnYaw = Random.Range(0f, 360f);
-                    Vector3 testPosition = new Vector3(spawnX, startPosition.y, spawnZ);
-                    
-                    float targetYaw = target.transform.rotation.eulerAngles.y;
-                    
-                    // Estimate task difficulty using Hybrid A*
-                    var assessment = pathPlanner.EvaluatePath(testPosition, spawnYaw, target.transform.position, targetYaw);
-
-                    if (assessment.IsFeasible)
+                    for (int i = 0; i < maxSpawnAttempts; i++)
                     {
-                        int scenarioDifficulty = 1;
-                        if (assessment.GearShifts > 2 || assessment.PathLength > 15f) scenarioDifficulty = 3;
-                        else if (assessment.GearShifts > 0) scenarioDifficulty = 2;
+                        float spawnX = Random.Range(startPosition.x - spawnRadiusX, startPosition.x + spawnRadiusX);
+                        float spawnZ = Random.Range(startPosition.z - spawnRadiusZ, startPosition.z + spawnRadiusZ);
+                        float spawnYaw = Random.Range(0f, 360f);
+                        Vector3 testPosition = new Vector3(spawnX, startPosition.y, spawnZ);
+                        
+                        var assessment = pathPlanner.EvaluatePath(testPosition, spawnYaw, target.transform.position, target.transform.eulerAngles.y);
 
-                        // Retain easier scenarios but bound max difficulty to agent's current progress
-                        if (scenarioDifficulty <= currentCurriculumLevel)
+                        if (assessment.IsFeasible)
                         {
-                            ApplySpawnTransform(testPosition, Quaternion.Euler(0, spawnYaw, 0));
-                            validSpawnFound = true;
-                            break;
+                            fallbackPos = testPosition; // Save at least ONE feasible spot
+                            fallbackYaw = spawnYaw;
+
+                            int scenarioDifficulty = 1;
+                            if (assessment.GearShifts > 2 || assessment.PathLength > 15f) scenarioDifficulty = 3;
+                            else if (assessment.GearShifts > 0) scenarioDifficulty = 2;
+
+                            if (scenarioDifficulty <= currentCurriculumLevel)
+                            {
+                                ApplySpawnTransform(testPosition, Quaternion.Euler(0, spawnYaw, 0));
+                                validSpawnFound = true;
+                                break;
+                            }
                         }
                     }
                 }
-            }
 
-            // Fallback if curriculum spawn fails or is disabled
-            if (!validSpawnFound)
-            {
-                float spawnX = Random.Range(startPosition.x - spawnRadiusX, startPosition.x + spawnRadiusX);
-                float spawnZ = Random.Range(startPosition.z - spawnRadiusZ, startPosition.z + spawnRadiusZ);
-                ApplySpawnTransform(new Vector3(spawnX, startPosition.y, spawnZ), startRotation);
+                if (!validSpawnFound)
+                {
+                    // Use the feasible fallback, not a blind random guess
+                    ApplySpawnTransform(fallbackPos, Quaternion.Euler(0, fallbackYaw, 0));
+                }
+                steps = 0;
             }
-
-            steps = 0;
-        }
 
         private void ApplySpawnTransform(Vector3 pos, Quaternion rot)
         {
@@ -236,6 +234,16 @@ namespace UnityStandardAssets.Vehicles.Car{
 
         public override void CollectObservations(VectorSensor sensor){
             sensor.AddObservation(carController.CurrentSpeed);
+
+            // Goal Position: Where is the spot relative to the car?
+            Vector3 localTargetPos = transform.InverseTransformPoint(target.transform.position);
+            sensor.AddObservation(localTargetPos.x);
+            sensor.AddObservation(localTargetPos.z);
+
+            // Goal Orientation: Which way should the car face?
+            Vector3 localTargetForward = transform.InverseTransformDirection(target.transform.forward);
+            sensor.AddObservation(localTargetForward.x);
+            sensor.AddObservation(localTargetForward.z);
         }
 
         public override void OnActionReceived(ActionBuffers actions){
