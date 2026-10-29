@@ -253,6 +253,12 @@ namespace UnityStandardAssets.Vehicles.Car
                 else if(accel == 0 && Mathf.Abs(CurrentSpeed) > 2)
                 {
                     m_WheelColliders[i].brakeTorque = m_engineBrakeTorque;
+                    m_WheelColliders[i].motorTorque = 0f;
+                }
+                else if(accel == 0)
+                {
+                    m_WheelColliders[i].brakeTorque = 0f;
+                    m_WheelColliders[i].motorTorque = 0f;
                 }
                 else if(accel != 0)
                 {

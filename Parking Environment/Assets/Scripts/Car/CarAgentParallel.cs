@@ -7,6 +7,7 @@ using UnityEngine;
 using Unity.MLAgents;
 using Unity.MLAgents.Sensors;
 using Unity.MLAgents.Actuators;
+using Unity.MLAgents.Policies;
 
 namespace UnityStandardAssets.Vehicles.Car{
     public class CarAgentParallel : Agent
@@ -21,6 +22,22 @@ namespace UnityStandardAssets.Vehicles.Car{
         public int cameraHeight = 200;
         public bool cameraGrayScale = false;
         public SensorCompressionType sensorCompressionType = SensorCompressionType.PNG;
+        public bool useLegacyRgbCameraSensors = false;
+
+        [Header("Camera-Based LiDAR Sensor Settings")]
+        public bool useLidarSensor = true;
+        public CameraBasedLidarSensor lidarSensor;
+        public int lidarHorizontalSamplesPerCamera = 16;
+        public int lidarVerticalChannels = 4;
+        public float lidarHorizontalFov = 90f;
+        public float lidarMinVerticalAngle = -15f;
+        public float lidarMaxVerticalAngle = 15f;
+        public float lidarMinRange = 0.3f;
+        public float lidarMaxRange = 20f;
+        public float lidarRotationFrequencyHz = 10f;
+        public CameraBasedLidarSensor.LidarSamplingMode lidarSamplingMode = CameraBasedLidarSensor.LidarSamplingMode.CameraDepthShader;
+        public CameraBasedLidarSensor.LidarOutputType lidarOutputType = CameraBasedLidarSensor.LidarOutputType.LaserRangeScan;
+        public float lidarRangeNoiseStdDev = 0f;
 
         public bool enableLogging = true;
 
@@ -111,6 +128,44 @@ namespace UnityStandardAssets.Vehicles.Car{
             return reward;            
         }
 
+        private void SetupLidarSensor(){
+            if(!useLidarSensor){
+                return;
+            }
+
+            if(lidarSensor == null){
+                lidarSensor = GetComponent<CameraBasedLidarSensor>();
+            }
+            if(lidarSensor == null){
+                lidarSensor = gameObject.AddComponent<CameraBasedLidarSensor>();
+            }
+
+            lidarSensor.horizontalSamplesPerCamera = lidarHorizontalSamplesPerCamera;
+            lidarSensor.verticalChannels = lidarVerticalChannels;
+            lidarSensor.horizontalFov = lidarHorizontalFov;
+            lidarSensor.minVerticalAngle = lidarMinVerticalAngle;
+            lidarSensor.maxVerticalAngle = lidarMaxVerticalAngle;
+            lidarSensor.minRange = lidarMinRange;
+            lidarSensor.maxRange = lidarMaxRange;
+            lidarSensor.rotationFrequencyHz = lidarRotationFrequencyHz;
+            lidarSensor.samplingMode = lidarSamplingMode;
+            lidarSensor.outputType = lidarOutputType;
+            lidarSensor.rangeNoiseStdDev = lidarRangeNoiseStdDev;
+
+            lidarSensor.Initialize(carCameras);
+
+            BehaviorParameters behaviorParams = GetComponent<BehaviorParameters>();
+            if(behaviorParams != null && behaviorParams.BrainParameters != null){
+                behaviorParams.BrainParameters.VectorObservationSize = 1 + lidarSensor.ObservationSize;
+            }
+
+            // FixedUpdate already calls RequestDecision(); disable redundant DecisionRequester if attached
+            DecisionRequester decisionRequester = GetComponent<DecisionRequester>();
+            if(decisionRequester != null){
+                decisionRequester.enabled = false;
+            }
+        }
+
         private void AddCameras(){
             // Add car's cameras to the agent
             foreach(Camera c in carCameras){
@@ -144,6 +199,10 @@ namespace UnityStandardAssets.Vehicles.Car{
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
 
+            if(lidarSensor != null){
+                lidarSensor.ResetSensor();
+            }
+
             steps = 0;
         }
 
@@ -158,8 +217,11 @@ namespace UnityStandardAssets.Vehicles.Car{
             // Used for calculating reward
             lastPosition = startPosition;
 
+            SetupLidarSensor();
             Reset();
-            //AddCameras();
+            if(useLegacyRgbCameraSensors){
+                AddCameras();
+            }
         }
 
         public override void OnEpisodeBegin(){
@@ -168,6 +230,10 @@ namespace UnityStandardAssets.Vehicles.Car{
 
         public override void CollectObservations(VectorSensor sensor){
             sensor.AddObservation(carController.CurrentSpeed);
+            if(useLidarSensor && lidarSensor != null){
+                float[] lidarObservations = lidarSensor.Perceive();
+                sensor.AddObservation(lidarObservations);
+            }
         }
 
         public override void OnActionReceived(ActionBuffers actions){

@@ -4188,6 +4188,10 @@ PrefabInstance:
       value: 200
       objectReference: {fileID: 0}
     - target: {fileID: 2573131914687906485, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
+      propertyPath: useLidarSensor
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 2573131914687906485, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
       propertyPath: carCameras.Array.size
       value: 0
       objectReference: {fileID: 0}
@@ -4260,6 +4264,10 @@ PrefabInstance:
       value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 6017787278588639168, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
+      propertyPath: m_Enabled
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 6017787278588639168, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
       propertyPath: m_DetectableTags.Array.size
       value: 3
       objectReference: {fileID: 0}
@@ -4285,7 +4293,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8268270515027760545, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
       propertyPath: m_BrainParameters.VectorObservationSize
-      value: 1
+      value: 513
       objectReference: {fileID: 0}
     - target: {fileID: 8268270515027760545, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
       propertyPath: m_BrainParameters.NumStackedVectorObservations
@@ -4295,7 +4303,8 @@ PrefabInstance:
       propertyPath: DecisionPeriod
       value: 4
       objectReference: {fileID: 0}
-    m_RemovedComponents: []
+    m_RemovedComponents:
+    - {fileID: 6017787278588639168, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
     m_AddedComponents: []

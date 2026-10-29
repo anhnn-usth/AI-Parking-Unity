@@ -749,7 +749,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!4 &2087425814328422184
 Transform:
   m_ObjectHideFlags: 0
@@ -944,8 +944,8 @@ MonoBehaviour:
   m_MaximumSteerAngle: 40
   m_SteerHelper: 0.192
   m_TractionControl: 0.212
-  m_FullTorqueOverAllWheels: 500
-  m_ReverseTorque: 100
+  m_FullTorqueOverAllWheels: 1000
+  m_ReverseTorque: 500
   m_MaxHandbrakeTorque: 3.4028235e+38
   m_Downforce: 100
   m_SpeedType: 1
@@ -976,7 +976,15 @@ MonoBehaviour:
   envRadiusZ: 7.5
   inTargetMultiplier: 1.5
   target: {fileID: 0}
-  carCameras: []
+  carCameras:
+  - {fileID: 2087425814335740734}
+  - {fileID: 2087425813058989662}
+  - {fileID: 2087425813337370810}
+  - {fileID: 2087425813799407375}
+  - {fileID: 2087425813515592059}
+  - {fileID: 2087425813323972899}
+  - {fileID: 2087425814014327397}
+  - {fileID: 2087425812574942084}
   cameraWidth: 200
   cameraHeight: 200
   cameraGrayScale: 0
@@ -996,7 +1004,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 1
+    VectorObservationSize: 513
     NumStackedVectorObservations: 3
     m_ActionSpec:
       m_NumContinuousActions: 3

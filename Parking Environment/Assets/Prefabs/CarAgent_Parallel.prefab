@@ -835,7 +835,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!4 &5782158254144504496
 Transform:
   m_ObjectHideFlags: 0
@@ -1540,7 +1540,7 @@ MonoBehaviour:
   m_SteerHelper: 0.192
   m_TractionControl: 0.212
   m_FullTorqueOverAllWheels: 1000
-  m_ReverseTorque: 100
+  m_ReverseTorque: 500
   m_MaxHandbrakeTorque: 3.4028235e+38
   m_Downforce: 100
   m_SpeedType: 1
@@ -1597,7 +1597,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_BrainParameters:
-    VectorObservationSize: 1
+    VectorObservationSize: 513
     NumStackedVectorObservations: 1
     m_ActionSpec:
       m_NumContinuousActions: 3
