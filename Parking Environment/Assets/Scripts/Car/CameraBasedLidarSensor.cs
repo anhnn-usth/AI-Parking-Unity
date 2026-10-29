@@ -59,11 +59,19 @@ namespace UnityStandardAssets.Vehicles.Car
 
         [Tooltip("Minimum vertical elevation angle in degrees.")]
         [Range(-60f, 0f)]
-        public float minVerticalAngle = -15f;
+        public float minVerticalAngle = -2f;
 
         [Tooltip("Maximum vertical elevation angle in degrees.")]
         [Range(0f, 60f)]
-        public float maxVerticalAngle = 15f;
+        public float maxVerticalAngle = 10f;
+
+        [Header("Ground & Trigger Filtering")]
+        [Tooltip("Exclude flat ground Plane and non-solid trigger objects (such as the green Target parking zone) from LiDAR obstacle returns.")]
+        public bool ignoreGroundAndTriggers = true;
+
+        [Tooltip("Height threshold (in meters relative to ego car base) below which hits are filtered as road surface.")]
+        [Range(-0.2f, 0.5f)]
+        public float groundHeightThreshold = 0.15f;
 
         [Header("Range & Timing")]
         [Tooltip("Minimum detection range in meters (near clip plane).")]
@@ -106,6 +114,8 @@ namespace UnityStandardAssets.Vehicles.Car
         private Shader lidarDepthShader;
         private RenderTexture scanRenderTexture;
         private Texture2D readbackTexture;
+        private Texture2D hudPreviewTexture;
+        private Color[] hudPreviewPixels;
         private bool useRFloatTexture;
 
         private float[] normalizedRanges;
@@ -116,6 +126,11 @@ namespace UnityStandardAssets.Vehicles.Car
 
         private Collider[] egoColliders;
         private bool[] egoColliderStates;
+
+        private Renderer[] egoRenderers;
+        private bool[] egoRendererStates;
+        private readonly List<Renderer> ignoredSceneRenderers = new List<Renderer>();
+        private readonly List<bool> ignoredSceneRendererStates = new List<bool>();
 
         private float lastScanTime = -999f;
         private bool isInitialized = false;
@@ -171,9 +186,12 @@ namespace UnityStandardAssets.Vehicles.Car
             NormalizeNegativeScaleContainers();
             ConfigureCameras();
 
-            // Cache ego car colliders to prevent self-hit in PhysicsRaycast mode
+            // Cache ego car colliders and renderers to prevent self-hit
             egoColliders = GetComponentsInChildren<Collider>(true);
             egoColliderStates = new bool[egoColliders.Length];
+            egoRenderers = GetComponentsInChildren<Renderer>(true);
+            egoRendererStates = new bool[egoRenderers.Length];
+            CacheIgnoredSceneRenderers();
 
             // Load depth replacement shader
             lidarDepthShader = Shader.Find("Hidden/CameraBasedLidarDepth");
@@ -460,6 +478,14 @@ namespace UnityStandardAssets.Vehicles.Car
                 filterMode = FilterMode.Point,
                 wrapMode = TextureWrapMode.Clamp
             };
+
+            hudPreviewTexture = new Texture2D(atlasWidth, height, TextureFormat.RGBA32, false, false)
+            {
+                name = "LidarHudPreviewTex",
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            hudPreviewPixels = new Color[atlasWidth * height];
         }
 
         private void CaptureScan()
@@ -500,19 +526,27 @@ namespace UnityStandardAssets.Vehicles.Car
             Shader.SetGlobalFloat(LidarMaxRangeShaderId, maxRange);
             RenderTexture previousActive = RenderTexture.active;
 
-            // Render all 8 cameras into their respective slices of scanRenderTexture
-            for (int camIdx = 0; camIdx < camCount; camIdx++)
+            SetIgnoredRenderersEnabled(false);
+            try
             {
-                Camera cam = lidarCameras[camIdx];
-                if (cam == null)
+                // Render all 8 cameras into their respective slices of scanRenderTexture
+                for (int camIdx = 0; camIdx < camCount; camIdx++)
                 {
-                    continue;
-                }
+                    Camera cam = lidarCameras[camIdx];
+                    if (cam == null)
+                    {
+                        continue;
+                    }
 
-                RenderTexture prevCamTarget = cam.targetTexture;
-                cam.targetTexture = scanRenderTexture;
-                cam.RenderWithShader(lidarDepthShader, "");
-                cam.targetTexture = prevCamTarget;
+                    RenderTexture prevCamTarget = cam.targetTexture;
+                    cam.targetTexture = scanRenderTexture;
+                    cam.RenderWithShader(lidarDepthShader, "");
+                    cam.targetTexture = prevCamTarget;
+                }
+            }
+            finally
+            {
+                SetIgnoredRenderersEnabled(true);
             }
 
             // Single GPU-to-CPU ReadPixels call for the entire 8-camera atlas
@@ -521,6 +555,7 @@ namespace UnityStandardAssets.Vehicles.Car
             RenderTexture.active = previousActive;
 
             Color[] pixels = readbackTexture.GetPixels();
+            bool updateHudPreview = showPointCloudHud && primaryHudSensor == this && hudPreviewTexture != null && hudPreviewPixels != null;
 
             int beamIndex = 0;
             int obsIndex = 0;
@@ -543,7 +578,8 @@ namespace UnityStandardAssets.Vehicles.Car
                     for (int u = 0; u < singleWidth; u++)
                     {
                         float viewportU = singleWidth == 1 ? 0.5f : (u + 0.5f) / singleWidth;
-                        Color pixel = pixels[rowOffset + u];
+                        int pixelIdx = rowOffset + u;
+                        Color pixel = pixels[pixelIdx];
 
                         float normDist = Mathf.Clamp01(pixel.r);
                         float distanceMeters = normDist * maxRange;
@@ -554,9 +590,22 @@ namespace UnityStandardAssets.Vehicles.Car
                             normDist = distanceMeters / maxRange;
                         }
 
-                        if (drawPointCloudGizmos || drawDebugRays || showPointCloudHud || outputType == LidarOutputType.PointCloudXYZ)
+                        bool needWorldRay = ignoreGroundAndTriggers || drawPointCloudGizmos || drawDebugRays || showPointCloudHud || outputType == LidarOutputType.PointCloudXYZ;
+                        if (needWorldRay)
                         {
                             Ray worldRay = GetBeamWorldRay(cam, viewportU, viewportV);
+
+                            if (ignoreGroundAndTriggers && normDist < 0.999f)
+                            {
+                                Vector3 worldHit = worldRay.origin + worldRay.direction * distanceMeters;
+                                Vector3 localHit = transform.InverseTransformPoint(worldHit);
+                                if (localHit.y <= groundHeightThreshold)
+                                {
+                                    normDist = 1f;
+                                    distanceMeters = maxRange;
+                                }
+                            }
+
                             lastWorldRayOrigins[beamIndex] = worldRay.origin;
                             lastWorldRayDirections[beamIndex] = worldRay.direction;
                             lastHitDistances[beamIndex] = distanceMeters;
@@ -567,10 +616,23 @@ namespace UnityStandardAssets.Vehicles.Car
                             observationBuffer[obsIndex++] = normDist;
                         }
 
+                        if (updateHudPreview && pixelIdx < hudPreviewPixels.Length)
+                        {
+                            hudPreviewPixels[pixelIdx] = normDist < 0.999f
+                                ? Color.HSVToRGB(Mathf.Clamp01(normDist * 0.35f), 0.95f, 1f)
+                                : new Color(0.05f, 0.07f, 0.1f, 1f);
+                        }
+
                         normalizedRanges[beamIndex] = normDist;
                         beamIndex++;
                     }
                 }
+            }
+
+            if (updateHudPreview)
+            {
+                hudPreviewTexture.SetPixels(hudPreviewPixels);
+                hudPreviewTexture.Apply(false);
             }
         }
 
@@ -606,12 +668,27 @@ namespace UnityStandardAssets.Vehicles.Car
 
                             if (Physics.Raycast(worldRay.origin, worldRay.direction, out RaycastHit hit, maxRange, cullingMask, QueryTriggerInteraction.Ignore))
                             {
-                                distanceMeters = Mathf.Clamp(hit.distance, minRange, maxRange);
-                                if (rangeNoiseStdDev > 0f)
+                                bool isGroundHit = false;
+                                if (ignoreGroundAndTriggers)
                                 {
-                                    distanceMeters = Mathf.Clamp(distanceMeters + SampleGaussianNoise(rangeNoiseStdDev), minRange, maxRange);
+                                    Vector3 localHit = transform.InverseTransformPoint(hit.point);
+                                    if (localHit.y <= groundHeightThreshold ||
+                                        hit.collider.gameObject.name == "Plane" ||
+                                        hit.collider.CompareTag("Finish"))
+                                    {
+                                        isGroundHit = true;
+                                    }
                                 }
-                                normDist = distanceMeters / maxRange;
+
+                                if (!isGroundHit)
+                                {
+                                    distanceMeters = Mathf.Clamp(hit.distance, minRange, maxRange);
+                                    if (rangeNoiseStdDev > 0f)
+                                    {
+                                        distanceMeters = Mathf.Clamp(distanceMeters + SampleGaussianNoise(rangeNoiseStdDev), minRange, maxRange);
+                                    }
+                                    normDist = distanceMeters / maxRange;
+                                }
                             }
 
                             normalizedRanges[beamIndex] = normDist;
@@ -670,6 +747,83 @@ namespace UnityStandardAssets.Vehicles.Car
             }
         }
 
+        private void CacheIgnoredSceneRenderers()
+        {
+            ignoredSceneRenderers.Clear();
+            ignoredSceneRendererStates.Clear();
+
+            Renderer[] allRenderers = FindObjectsByType<Renderer>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            for (int i = 0; i < allRenderers.Length; i++)
+            {
+                Renderer r = allRenderers[i];
+                if (r == null || r.transform.IsChildOf(transform))
+                {
+                    continue;
+                }
+
+                GameObject go = r.gameObject;
+                Collider col = go.GetComponent<Collider>();
+                bool isTriggerVisual = (col != null && col.isTrigger) || go.CompareTag("Finish");
+                bool isGroundPlane = go.name == "Plane";
+
+                if (isTriggerVisual || isGroundPlane)
+                {
+                    ignoredSceneRenderers.Add(r);
+                    ignoredSceneRendererStates.Add(r.enabled);
+                }
+            }
+        }
+
+        private void SetIgnoredRenderersEnabled(bool enabledState)
+        {
+            // Always hide ego car's own body meshes from its onboard LiDAR cameras
+            if (egoRenderers != null)
+            {
+                for (int i = 0; i < egoRenderers.Length; i++)
+                {
+                    Renderer r = egoRenderers[i];
+                    if (r == null)
+                    {
+                        continue;
+                    }
+
+                    if (!enabledState)
+                    {
+                        egoRendererStates[i] = r.enabled;
+                        r.enabled = false;
+                    }
+                    else
+                    {
+                        r.enabled = egoRendererStates[i];
+                    }
+                }
+            }
+
+            if (!ignoreGroundAndTriggers)
+            {
+                return;
+            }
+
+            for (int i = 0; i < ignoredSceneRenderers.Count; i++)
+            {
+                Renderer r = ignoredSceneRenderers[i];
+                if (r == null)
+                {
+                    continue;
+                }
+
+                if (!enabledState)
+                {
+                    ignoredSceneRendererStates[i] = r.enabled;
+                    r.enabled = false;
+                }
+                else
+                {
+                    r.enabled = ignoredSceneRendererStates[i];
+                }
+            }
+        }
+
         private void SetEgoCollidersEnabled(bool enabledState)
         {
             if (egoColliders == null)
@@ -718,6 +872,12 @@ namespace UnityStandardAssets.Vehicles.Car
             {
                 Destroy(readbackTexture);
                 readbackTexture = null;
+            }
+
+            if (hudPreviewTexture != null)
+            {
+                Destroy(hudPreviewTexture);
+                hudPreviewTexture = null;
             }
         }
 
@@ -879,14 +1039,15 @@ namespace UnityStandardAssets.Vehicles.Car
             }
 
             // Draw 360° Panoramic Depth Atlas below the BEV radar
-            if (readbackTexture != null)
+            Texture2D stripTex = hudPreviewTexture != null ? hudPreviewTexture : readbackTexture;
+            if (stripTex != null)
             {
                 Rect stripLabelRect = new Rect(panelRect.x + 8f, radarRect.yMax + 2f, radarSize, 16f);
                 GUI.color = Color.white;
                 GUI.Label(stripLabelRect, "360° Depth Map (8 Cams × 4 Layers):");
 
                 Rect stripRect = new Rect(panelRect.x + 8f, radarRect.yMax + 18f, radarSize, depthStripHeight);
-                GUI.DrawTexture(stripRect, readbackTexture, ScaleMode.StretchToFill, false);
+                GUI.DrawTexture(stripRect, stripTex, ScaleMode.StretchToFill, false);
             }
 
             GUI.color = Color.white;
