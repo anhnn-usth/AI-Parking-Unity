@@ -74,6 +74,9 @@ namespace UnityStandardAssets.Vehicles.Car
         [Tooltip("3D sampling implementation: GPU Camera Depth Shader (Raster 3D LiDAR) or 3D Physics Raycast.")]
         public LidarSamplingMode samplingMode = LidarSamplingMode.CameraDepthShader;
 
+        [Tooltip("Pool vertical elevation channels per azimuth column into the closest 3D (x, y, z) obstacle point so native SB3 MlpPolicy receives a compact 3D point cloud (128x3 = 384 floats instead of 512x3 = 1536).")]
+        public bool poolVerticalChannelsForMlp = true;
+
         [Tooltip("Standard deviation of Gaussian radial range noise in meters (0 = noise-free).")]
         [Range(0f, 0.5f)]
         public float rangeNoiseStdDev = 0f;
@@ -112,6 +115,8 @@ namespace UnityStandardAssets.Vehicles.Car
         private Vector3[] worldPointCloudXYZ;
         private Vector3[] lastWorldRayOrigins;
         private Vector3[] lastWorldRayDirections;
+        private Vector3[] cachedLocalRayOrigins;
+        private Vector3[] cachedLocalRayDirections;
         private float[] lastHitDistances;
 
         private Collider[] egoColliders;
@@ -151,15 +156,27 @@ namespace UnityStandardAssets.Vehicles.Car
         }
 
         /// <summary>
+        /// Total number of horizontal azimuth columns across all cameras (CameraCount * horizontalSamplesPerCamera).
+        /// </summary>
+        public int HorizontalAzimuthCount => Mathf.Max(1, CameraCount) * Mathf.Max(1, horizontalSamplesPerCamera);
+
+        /// <summary>
         /// Total number of 3D laser beams across all cameras (CameraCount * horizontalSamplesPerCamera * verticalChannels).
         /// </summary>
-        public int TotalBeamCount => Mathf.Max(1, CameraCount) * Mathf.Max(1, horizontalSamplesPerCamera) * Mathf.Max(2, verticalChannels);
+        public int TotalBeamCount => HorizontalAzimuthCount * Mathf.Max(2, verticalChannels);
+
+        /// <summary>
+        /// Number of 3D (x, y, z) points written to the ML-Agents VectorSensor per step.
+        /// When poolVerticalChannelsForMlp is true, each horizontal azimuth column outputs its closest 3D hit point (x, y, z)
+        /// across all vertical elevation channels (128 points = 384 floats), ideal for native SB3 MlpPolicy.
+        /// </summary>
+        public int ObservationPointCount => poolVerticalChannelsForMlp ? HorizontalAzimuthCount : TotalBeamCount;
 
         /// <summary>
         /// Total number of floats written to the ML-Agents VectorSensor per step:
-        /// 3 floats (local X, Y, Z) per 3D laser beam (TotalBeamCount * 3).
+        /// 3 floats (local X, Y, Z) per exported 3D point (ObservationPointCount * 3).
         /// </summary>
-        public int ObservationSize => TotalBeamCount * 3;
+        public int ObservationSize => ObservationPointCount * 3;
 
         /// <summary>
         /// Read-only access to the latest normalized radial range values [0, 1] for each 3D beam.
@@ -460,6 +477,8 @@ namespace UnityStandardAssets.Vehicles.Car
             worldPointCloudXYZ = new Vector3[totalBeams];
             lastWorldRayOrigins = new Vector3[totalBeams];
             lastWorldRayDirections = new Vector3[totalBeams];
+            cachedLocalRayOrigins = new Vector3[totalBeams];
+            cachedLocalRayDirections = new Vector3[totalBeams];
             lastHitDistances = new float[totalBeams];
 
             for (int i = 0; i < totalBeams; i++)
@@ -468,6 +487,7 @@ namespace UnityStandardAssets.Vehicles.Car
                 lastHitDistances[i] = maxRange;
             }
 
+            PrecomputeLocalRays();
             ReleaseTextures();
 
             useRFloatTexture = SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RFloat);
@@ -491,6 +511,40 @@ namespace UnityStandardAssets.Vehicles.Car
             };
         }
 
+        private void PrecomputeLocalRays()
+        {
+            if (lidarCameras == null || lidarCameras.Length == 0)
+            {
+                return;
+            }
+
+            int width = Mathf.Max(1, horizontalSamplesPerCamera);
+            int height = Mathf.Max(2, verticalChannels);
+            int beamIndex = 0;
+
+            for (int camIdx = 0; camIdx < lidarCameras.Length; camIdx++)
+            {
+                Camera cam = lidarCameras[camIdx];
+                if (cam == null)
+                {
+                    continue;
+                }
+
+                for (int v = 0; v < height; v++)
+                {
+                    float viewportV = (v + 0.5f) / height;
+                    for (int u = 0; u < width; u++)
+                    {
+                        float viewportU = width == 1 ? 0.5f : (u + 0.5f) / width;
+                        Ray worldRay = GetBeamWorldRay(cam, viewportU, viewportV);
+                        cachedLocalRayOrigins[beamIndex] = transform.InverseTransformPoint(worldRay.origin);
+                        cachedLocalRayDirections[beamIndex] = transform.InverseTransformDirection(worldRay.direction).normalized;
+                        beamIndex++;
+                    }
+                }
+            }
+        }
+
         private void CaptureScan()
         {
             if (lidarCameras == null || lidarCameras.Length == 0)
@@ -498,7 +552,14 @@ namespace UnityStandardAssets.Vehicles.Car
                 return;
             }
 
-            bool canUseGpuShader = samplingMode == LidarSamplingMode.CameraDepthShader &&
+            // During Python ML-Agents training (Communicator on), bypass GPU Camera.RenderWithShader + synchronous ReadPixels
+            // to eliminate GPU-CPU pipeline stalls and maximize training iterations/sec.
+            bool bypassGpuReadbackForTraining = autoDisableVisualsDuringTraining &&
+                                                Academy.IsInitialized &&
+                                                Academy.Instance.IsCommunicatorOn;
+
+            bool canUseGpuShader = !bypassGpuReadbackForTraining &&
+                                   samplingMode == LidarSamplingMode.CameraDepthShader &&
                                    SystemInfo.graphicsDeviceType != GraphicsDeviceType.Null &&
                                    lidarDepthShader != null &&
                                    lidarDepthShader.isSupported;
@@ -511,6 +572,8 @@ namespace UnityStandardAssets.Vehicles.Car
             {
                 CaptureScanWithPhysicsRaycast();
             }
+
+            PopulateObservationBuffer();
         }
 
         private void CaptureScanWithCameraShader()
@@ -560,7 +623,6 @@ namespace UnityStandardAssets.Vehicles.Car
             Color[] pixels = readbackTexture.GetPixels();
 
             int beamIndex = 0;
-            int obsIndex = 0;
 
             for (int camIdx = 0; camIdx < camCount; camIdx++)
             {
@@ -574,12 +636,10 @@ namespace UnityStandardAssets.Vehicles.Car
 
                 for (int v = 0; v < height; v++)
                 {
-                    float viewportV = (v + 0.5f) / height;
                     int rowOffset = v * atlasWidth + xOffset;
 
                     for (int u = 0; u < singleWidth; u++)
                     {
-                        float viewportU = singleWidth == 1 ? 0.5f : (u + 0.5f) / singleWidth;
                         Color pixel = pixels[rowOffset + u];
 
                         float normDist = Mathf.Clamp01(pixel.r);
@@ -591,26 +651,28 @@ namespace UnityStandardAssets.Vehicles.Car
                             normDist = distanceMeters / maxRange;
                         }
 
-                        Ray worldRay = GetBeamWorldRay(cam, viewportU, viewportV);
-                        Vector3 worldHit = worldRay.origin + worldRay.direction * distanceMeters;
-                        Vector3 localHit = transform.InverseTransformPoint(worldHit);
+                        Vector3 localOrigin = cachedLocalRayOrigins[beamIndex];
+                        Vector3 localDir = cachedLocalRayDirections[beamIndex];
+                        Vector3 localHit = localOrigin + localDir * distanceMeters;
+                        Vector3 worldOrigin = transform.TransformPoint(localOrigin);
+                        Vector3 worldDir = transform.TransformDirection(localDir);
+                        Vector3 worldHit = worldOrigin + worldDir * distanceMeters;
 
                         if (ignoreGroundAndTriggers && normDist < 0.999f && localHit.y <= groundHeightThreshold)
                         {
                             normDist = 1f;
                             distanceMeters = maxRange;
-                            worldHit = worldRay.origin + worldRay.direction * distanceMeters;
+                            worldHit = worldOrigin + worldDir * distanceMeters;
                             localHit = Vector3.zero;
                         }
 
                         normalizedRanges[beamIndex] = normDist;
-                        lastWorldRayOrigins[beamIndex] = worldRay.origin;
-                        lastWorldRayDirections[beamIndex] = worldRay.direction;
+                        lastWorldRayOrigins[beamIndex] = worldOrigin;
+                        lastWorldRayDirections[beamIndex] = worldDir;
                         lastHitDistances[beamIndex] = distanceMeters;
                         worldPointCloudXYZ[beamIndex] = worldHit;
                         localPointCloudXYZ[beamIndex] = normDist < 0.999f ? localHit : Vector3.zero;
 
-                        Write3DPointObservation(localHit, normDist, ref obsIndex);
                         beamIndex++;
                     }
                 }
@@ -621,37 +683,43 @@ namespace UnityStandardAssets.Vehicles.Car
         {
             int width = Mathf.Max(1, horizontalSamplesPerCamera);
             int height = Mathf.Max(2, verticalChannels);
+            int camCount = lidarCameras.Length;
+            int totalBeams = camCount * width * height;
+
+            if (cachedLocalRayDirections == null || cachedLocalRayDirections.Length != totalBeams)
+            {
+                PrecomputeLocalRays();
+            }
 
             int beamIndex = 0;
-            int obsIndex = 0;
 
             SetEgoCollidersEnabled(false);
             try
             {
-                for (int camIdx = 0; camIdx < lidarCameras.Length; camIdx++)
+                for (int camIdx = 0; camIdx < camCount; camIdx++)
                 {
-                    Camera cam = lidarCameras[camIdx];
-                    if (cam == null)
+                    if (lidarCameras[camIdx] == null)
                     {
                         continue;
                     }
 
                     for (int v = 0; v < height; v++)
                     {
-                        float viewportV = (v + 0.5f) / height;
                         for (int u = 0; u < width; u++)
                         {
-                            float viewportU = width == 1 ? 0.5f : (u + 0.5f) / width;
-                            Ray worldRay = GetBeamWorldRay(cam, viewportU, viewportV);
+                            Vector3 localOrigin = cachedLocalRayOrigins[beamIndex];
+                            Vector3 localDir = cachedLocalRayDirections[beamIndex];
+                            Vector3 worldOrigin = transform.TransformPoint(localOrigin);
+                            Vector3 worldDir = transform.TransformDirection(localDir);
 
                             float distanceMeters = maxRange;
                             float normDist = 1f;
-                            Vector3 worldHit = worldRay.origin + worldRay.direction * maxRange;
+                            Vector3 worldHit = worldOrigin + worldDir * maxRange;
                             Vector3 localHit = Vector3.zero;
 
-                            if (Physics.Raycast(worldRay.origin, worldRay.direction, out RaycastHit hit, maxRange, cullingMask, QueryTriggerInteraction.Ignore))
+                            if (Physics.Raycast(worldOrigin, worldDir, out RaycastHit hit, maxRange, cullingMask, QueryTriggerInteraction.Ignore))
                             {
-                                Vector3 candidateLocalHit = transform.InverseTransformPoint(hit.point);
+                                Vector3 candidateLocalHit = localOrigin + localDir * hit.distance;
                                 bool isGroundHit = ignoreGroundAndTriggers &&
                                                    (candidateLocalHit.y <= groundHeightThreshold ||
                                                     hit.collider.gameObject.name == "Plane" ||
@@ -665,19 +733,18 @@ namespace UnityStandardAssets.Vehicles.Car
                                         distanceMeters = Mathf.Clamp(distanceMeters + SampleGaussianNoise(rangeNoiseStdDev), minRange, maxRange);
                                     }
                                     normDist = distanceMeters / maxRange;
-                                    worldHit = worldRay.origin + worldRay.direction * distanceMeters;
-                                    localHit = transform.InverseTransformPoint(worldHit);
+                                    localHit = localOrigin + localDir * distanceMeters;
+                                    worldHit = worldOrigin + worldDir * distanceMeters;
                                 }
                             }
 
                             normalizedRanges[beamIndex] = normDist;
-                            lastWorldRayOrigins[beamIndex] = worldRay.origin;
-                            lastWorldRayDirections[beamIndex] = worldRay.direction;
+                            lastWorldRayOrigins[beamIndex] = worldOrigin;
+                            lastWorldRayDirections[beamIndex] = worldDir;
                             lastHitDistances[beamIndex] = distanceMeters;
                             worldPointCloudXYZ[beamIndex] = worldHit;
                             localPointCloudXYZ[beamIndex] = localHit;
 
-                            Write3DPointObservation(localHit, normDist, ref obsIndex);
                             beamIndex++;
                         }
                     }
@@ -686,6 +753,54 @@ namespace UnityStandardAssets.Vehicles.Car
             finally
             {
                 SetEgoCollidersEnabled(true);
+            }
+        }
+
+        /// <summary>
+        /// Populates observationBuffer with 3D (x, y, z) coordinates for the ML-Agents VectorSensor.
+        /// When poolVerticalChannelsForMlp is true, pools across the vertical elevation channels for each
+        /// horizontal azimuth column by selecting the closest 3D hit point (x, y, z), giving native SB3 MlpPolicy
+        /// a compact 3D point cloud representation (128x3 = 384 floats instead of 512x3 = 1536).
+        /// </summary>
+        private void PopulateObservationBuffer()
+        {
+            int camCount = lidarCameras != null ? lidarCameras.Length : 0;
+            int width = Mathf.Max(1, horizontalSamplesPerCamera);
+            int height = Mathf.Max(2, verticalChannels);
+            int obsIndex = 0;
+
+            if (!poolVerticalChannelsForMlp)
+            {
+                int total = TotalBeamCount;
+                for (int i = 0; i < total; i++)
+                {
+                    Write3DPointObservation(localPointCloudXYZ[i], normalizedRanges[i], ref obsIndex);
+                }
+                return;
+            }
+
+            int camStride = width * height;
+            for (int camIdx = 0; camIdx < camCount; camIdx++)
+            {
+                int camBase = camIdx * camStride;
+                for (int u = 0; u < width; u++)
+                {
+                    float closestNormDist = 1f;
+                    Vector3 closestLocalHit = Vector3.zero;
+
+                    for (int v = 0; v < height; v++)
+                    {
+                        int beamIdx = camBase + v * width + u;
+                        float normDist = normalizedRanges[beamIdx];
+                        if (normDist < closestNormDist)
+                        {
+                            closestNormDist = normDist;
+                            closestLocalHit = localPointCloudXYZ[beamIdx];
+                        }
+                    }
+
+                    Write3DPointObservation(closestLocalHit, closestNormDist, ref obsIndex);
+                }
             }
         }
 
@@ -1220,7 +1335,7 @@ namespace UnityStandardAssets.Vehicles.Car
             GUI.color = Color.white;
             Rect footerRect = new Rect(panelRect.x + 8f, viewportRect.yMax + 4f, viewWidth, footerHeight);
             GUI.Label(footerRect,
-                $"3D Hits: {activeHitCount}/{TotalBeamCount}  |  VectorSensor: {ObservationSize} floats ({TotalBeamCount}×XYZ)\n" +
+                $"3D Hits: {activeHitCount}/{TotalBeamCount}  |  VectorSensor: {ObservationSize} floats ({ObservationPointCount}×XYZ)\n" +
                 $"Sample 3D Point (m): X={sampleHitXYZ.x:F2}, Y={sampleHitXYZ.y:F2}, Z={sampleHitXYZ.z:F2}",
                 footerStyle);
         }

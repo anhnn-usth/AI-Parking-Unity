@@ -377,6 +377,7 @@ namespace UnityStandardAssets.Vehicles.Car{
             BehaviorParameters behaviorParams = GetComponent<BehaviorParameters>();
             if(behaviorParams != null && behaviorParams.BrainParameters != null){
                 behaviorParams.BrainParameters.VectorObservationSize = 1 + lidarSensor.ObservationSize;
+                behaviorParams.BrainParameters.NumStackedVectorObservations = 1;
             }
 
             // FixedUpdate already calls RequestDecision(); disable redundant DecisionRequester if attached
