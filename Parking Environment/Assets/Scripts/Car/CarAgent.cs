@@ -24,19 +24,18 @@ namespace UnityStandardAssets.Vehicles.Car{
         public SensorCompressionType sensorCompressionType = SensorCompressionType.PNG;
         public bool useLegacyRgbCameraSensors = false;
 
-        [Header("Camera-Based LiDAR Sensor Settings")]
+        [Header("Camera-Based 3D LiDAR Sensor Settings")]
         public bool useLidarSensor = true;
         public CameraBasedLidarSensor lidarSensor;
         public int lidarHorizontalSamplesPerCamera = 16;
         public int lidarVerticalChannels = 4;
         public float lidarHorizontalFov = 90f;
-        public float lidarMinVerticalAngle = -2f;
-        public float lidarMaxVerticalAngle = 10f;
+        public float lidarMinVerticalAngle = -10f;
+        public float lidarMaxVerticalAngle = 15f;
         public float lidarMinRange = 0.3f;
         public float lidarMaxRange = 20f;
         public float lidarRotationFrequencyHz = 10f;
         public CameraBasedLidarSensor.LidarSamplingMode lidarSamplingMode = CameraBasedLidarSensor.LidarSamplingMode.CameraDepthShader;
-        public CameraBasedLidarSensor.LidarOutputType lidarOutputType = CameraBasedLidarSensor.LidarOutputType.LaserRangeScan;
         public float lidarRangeNoiseStdDev = 0f;
 
         private CarController carController;
@@ -362,13 +361,8 @@ namespace UnityStandardAssets.Vehicles.Car{
                 lidarSensor = gameObject.AddComponent<CameraBasedLidarSensor>();
             }
 
-            if(Mathf.Approximately(lidarMinVerticalAngle, -15f) && Mathf.Approximately(lidarMaxVerticalAngle, 15f)){
-                lidarMinVerticalAngle = -2f;
-                lidarMaxVerticalAngle = 10f;
-            }
-
             lidarSensor.horizontalSamplesPerCamera = lidarHorizontalSamplesPerCamera;
-            lidarSensor.verticalChannels = lidarVerticalChannels;
+            lidarSensor.verticalChannels = Mathf.Max(2, lidarVerticalChannels);
             lidarSensor.horizontalFov = lidarHorizontalFov;
             lidarSensor.minVerticalAngle = lidarMinVerticalAngle;
             lidarSensor.maxVerticalAngle = lidarMaxVerticalAngle;
@@ -376,7 +370,6 @@ namespace UnityStandardAssets.Vehicles.Car{
             lidarSensor.maxRange = lidarMaxRange;
             lidarSensor.rotationFrequencyHz = lidarRotationFrequencyHz;
             lidarSensor.samplingMode = lidarSamplingMode;
-            lidarSensor.outputType = lidarOutputType;
             lidarSensor.rangeNoiseStdDev = lidarRangeNoiseStdDev;
 
             lidarSensor.Initialize(carCameras);

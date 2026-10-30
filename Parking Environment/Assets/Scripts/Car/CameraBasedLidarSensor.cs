@@ -7,50 +7,36 @@ namespace UnityStandardAssets.Vehicles.Car
 {
     /// <summary>
     /// Camera-Based 3D LiDAR sensor for the ego car.
-    /// Emulates a multi-channel 3D LiDAR using standard Unity Cameras and depth/range rendering
-    /// (without requiring DXR/HDRP raytracing hardware), following the Unity SensorSDK CameraBasedLidar
-    /// and Unity Simulation LiDAR configuration specifications.
+    /// Emulates a multi-channel 3D LiDAR using standard Unity Cameras and 3D radial depth rendering,
+    /// outputting 3D Point Cloud (x, y, z) coordinates for every laser beam in the ego car's local 3D frame.
     /// </summary>
     public class CameraBasedLidarSensor : MonoBehaviour
     {
         public enum LidarSamplingMode
         {
             /// <summary>
-            /// Samples the scene using Unity Cameras and the Hidden/CameraBasedLidarDepth replacement shader
+            /// Samples the 3D scene using Unity Cameras and the Hidden/CameraBasedLidarDepth replacement shader
             /// (automatically falls back to PhysicsRaycast when running in headless -nographics mode).
             /// </summary>
             CameraDepthShader = 0,
 
             /// <summary>
-            /// Samples the scene using physics raycasts along each camera's pixel frustum rays.
+            /// Samples the 3D scene using 3D physics raycasts along each camera's frustum rays.
             /// </summary>
             PhysicsRaycast = 1
         }
 
-        public enum LidarOutputType
-        {
-            /// <summary>
-            /// Outputs 1 float per laser beam: radial distance normalized to [0, 1] by maxRange (1.0 = no hit).
-            /// </summary>
-            LaserRangeScan = 0,
-
-            /// <summary>
-            /// Outputs 3 floats per laser beam: ego-car-local (x, y, z) hit coordinates normalized by maxRange.
-            /// </summary>
-            PointCloudXYZ = 1
-        }
-
-        [Header("LiDAR Camera Rig")]
-        [Tooltip("Cameras forming the LiDAR rig (defaults to the 8 surround cameras under Self_driving_cameras).")]
+        [Header("3D LiDAR Camera Rig")]
+        [Tooltip("Cameras forming the 360° 3D LiDAR rig (defaults to the 8 surround cameras under Self_driving_cameras).")]
         public Camera[] lidarCameras;
 
-        [Header("Scan Pattern & Geometry")]
-        [Tooltip("Number of horizontal laser samples per camera (e.g., 16 samples x 8 cameras = 128 horizontal samples).")]
+        [Header("3D Scan Pattern & Geometry")]
+        [Tooltip("Number of horizontal laser samples per camera (e.g., 16 samples x 8 cameras = 128 horizontal azimuth samples).")]
         [Range(1, 256)]
         public int horizontalSamplesPerCamera = 16;
 
-        [Tooltip("Number of vertical laser channels (layers) per camera.")]
-        [Range(1, 64)]
+        [Tooltip("Number of vertical laser channels (elevation layers) per camera for 3D scanning.")]
+        [Range(2, 64)]
         public int verticalChannels = 4;
 
         [Tooltip("Horizontal field of view in degrees per camera.")]
@@ -59,14 +45,14 @@ namespace UnityStandardAssets.Vehicles.Car
 
         [Tooltip("Minimum vertical elevation angle in degrees.")]
         [Range(-60f, 0f)]
-        public float minVerticalAngle = -2f;
+        public float minVerticalAngle = -10f;
 
         [Tooltip("Maximum vertical elevation angle in degrees.")]
         [Range(0f, 60f)]
-        public float maxVerticalAngle = 10f;
+        public float maxVerticalAngle = 15f;
 
         [Header("Ground & Trigger Filtering")]
-        [Tooltip("Exclude flat ground Plane and non-solid trigger objects (such as the green Target parking zone) from LiDAR obstacle returns.")]
+        [Tooltip("Exclude flat ground Plane and non-solid trigger objects (such as the green Target parking zone) from 3D LiDAR obstacle returns.")]
         public bool ignoreGroundAndTriggers = true;
 
         [Tooltip("Height threshold (in meters relative to ego car base) below which hits are filtered as road surface.")]
@@ -74,52 +60,52 @@ namespace UnityStandardAssets.Vehicles.Car
         public float groundHeightThreshold = 0.15f;
 
         [Header("Range & Timing")]
-        [Tooltip("Minimum detection range in meters (near clip plane).")]
+        [Tooltip("Minimum 3D detection range in meters (near clip plane).")]
         public float minRange = 0.3f;
 
-        [Tooltip("Maximum detection range in meters (far clip plane).")]
+        [Tooltip("Maximum 3D detection range in meters (far clip plane).")]
         public float maxRange = 20f;
 
-        [Tooltip("LiDAR scan update rate in Hz (revolutions/scans per second). Standard automotive LiDAR is 10 Hz.")]
+        [Tooltip("3D LiDAR scan update rate in Hz (revolutions/scans per second). Standard automotive 3D LiDAR is 10 Hz.")]
         public float rotationFrequencyHz = 10f;
 
-        [Header("Output & Noise Configuration")]
-        [Tooltip("Sampling implementation: GPU Camera Depth Shader (Raster LiDAR) or Physics Raycast.")]
+        [Header("Sampling & Noise Configuration")]
+        [Tooltip("3D sampling implementation: GPU Camera Depth Shader (Raster 3D LiDAR) or 3D Physics Raycast.")]
         public LidarSamplingMode samplingMode = LidarSamplingMode.CameraDepthShader;
 
-        [Tooltip("Output format sent to the ML-Agents VectorSensor.")]
-        public LidarOutputType outputType = LidarOutputType.LaserRangeScan;
-
-        [Tooltip("Standard deviation of Gaussian range noise in meters (0 = noise-free).")]
+        [Tooltip("Standard deviation of Gaussian radial range noise in meters (0 = noise-free).")]
         [Range(0f, 0.5f)]
         public float rangeNoiseStdDev = 0f;
 
-        [Tooltip("Layer mask of objects detectable by the LiDAR.")]
+        [Tooltip("Layer mask of 3D objects detectable by the LiDAR.")]
         public LayerMask cullingMask = ~0;
 
-        [Header("Debug & Point Cloud Visualization")]
-        [Tooltip("Draw 3D LiDAR hit points (point cloud) in the Scene View (and Game View if Gizmos are enabled).")]
-        public bool drawPointCloudGizmos = true;
+        [Header("3D Point Cloud Visualization")]
+        [Tooltip("Render 3D point cloud spheres directly in the 3D scene (visible in both Game View and Scene View).")]
+        public bool render3DPointCloud = true;
 
-        [Tooltip("Draw the laser beam lines from the cameras to the hit points in the Scene View.")]
+        [Tooltip("Show the interactive 3D Perspective Point-Cloud Viewer HUD in the Game View (drag with mouse to orbit in 3D).")]
+        public bool show3DPointCloudViewer = true;
+
+        [Tooltip("Draw vertical elevation stalks under each 3D point in the 3D Viewer to highlight Y-height across vertical channels.")]
+        public bool show3DElevationStalks = true;
+
+        [Tooltip("Draw 3D laser beam lines from the cameras to the 3D hit points.")]
         public bool drawDebugRays = false;
 
         [Tooltip("Radius of each rendered 3D point cloud sphere in meters.")]
         [Range(0.02f, 0.3f)]
-        public float pointCloudSphereRadius = 0.08f;
-
-        [Tooltip("Show a live Bird's-Eye-View (BEV) point cloud radar and 360° depth map HUD in the Game View.")]
-        public bool showPointCloudHud = true;
+        public float pointCloudSphereRadius = 0.1f;
 
         private Shader lidarDepthShader;
         private RenderTexture scanRenderTexture;
         private Texture2D readbackTexture;
-        private Texture2D hudPreviewTexture;
-        private Color[] hudPreviewPixels;
         private bool useRFloatTexture;
 
         private float[] normalizedRanges;
         private float[] observationBuffer;
+        private Vector3[] localPointCloudXYZ;
+        private Vector3[] worldPointCloudXYZ;
         private Vector3[] lastWorldRayOrigins;
         private Vector3[] lastWorldRayDirections;
         private float[] lastHitDistances;
@@ -136,9 +122,16 @@ namespace UnityStandardAssets.Vehicles.Car
         private bool isInitialized = false;
 
         private static readonly int LidarMaxRangeShaderId = Shader.PropertyToID("_LidarMaxRange");
+        private static readonly int BaseColorShaderId = Shader.PropertyToID("_BaseColor");
+        private static readonly int ColorShaderId = Shader.PropertyToID("_Color");
+
+        private static CameraBasedLidarSensor primaryVisualSensor;
+        private static Mesh sharedSphereMesh;
+        private static Material sharedPointMaterial;
+        private MaterialPropertyBlock pointPropertyBlock;
 
         /// <summary>
-        /// Number of active cameras in the LiDAR rig.
+        /// Number of active cameras in the 3D LiDAR rig.
         /// </summary>
         public int CameraCount
         {
@@ -154,22 +147,33 @@ namespace UnityStandardAssets.Vehicles.Car
         }
 
         /// <summary>
-        /// Total number of laser beams across all cameras (CameraCount * horizontalSamplesPerCamera * verticalChannels).
+        /// Total number of 3D laser beams across all cameras (CameraCount * horizontalSamplesPerCamera * verticalChannels).
         /// </summary>
-        public int TotalBeamCount => Mathf.Max(1, CameraCount) * Mathf.Max(1, horizontalSamplesPerCamera) * Mathf.Max(1, verticalChannels);
+        public int TotalBeamCount => Mathf.Max(1, CameraCount) * Mathf.Max(1, horizontalSamplesPerCamera) * Mathf.Max(2, verticalChannels);
 
         /// <summary>
-        /// Total number of floats written to the ML-Agents VectorSensor per step.
+        /// Total number of floats written to the ML-Agents VectorSensor per step:
+        /// 3 floats (local X, Y, Z) per 3D laser beam (TotalBeamCount * 3).
         /// </summary>
-        public int ObservationSize => outputType == LidarOutputType.PointCloudXYZ ? TotalBeamCount * 3 : TotalBeamCount;
+        public int ObservationSize => TotalBeamCount * 3;
 
         /// <summary>
-        /// Read-only access to the latest normalized range values [0, 1] for each beam.
+        /// Read-only access to the latest normalized radial range values [0, 1] for each 3D beam.
         /// </summary>
         public float[] LatestNormalizedRanges => normalizedRanges;
 
         /// <summary>
-        /// Initializes the LiDAR camera rig, render targets, and buffers.
+        /// Read-only access to the latest 3D Point Cloud coordinates (x, y, z) in ego-car local space (in meters).
+        /// </summary>
+        public Vector3[] LatestLocalPointCloudXYZ => localPointCloudXYZ;
+
+        /// <summary>
+        /// Read-only access to the latest 3D Point Cloud coordinates (x, y, z) in Unity world space.
+        /// </summary>
+        public Vector3[] LatestWorldPointCloudXYZ => worldPointCloudXYZ;
+
+        /// <summary>
+        /// Initializes the 3D LiDAR camera rig, render targets, and 3D point cloud buffers.
         /// </summary>
         public void Initialize(Camera[] overrideCameras = null)
         {
@@ -193,7 +197,7 @@ namespace UnityStandardAssets.Vehicles.Car
             egoRendererStates = new bool[egoRenderers.Length];
             CacheIgnoredSceneRenderers();
 
-            // Load depth replacement shader
+            // Load 3D radial depth replacement shader
             lidarDepthShader = Shader.Find("Hidden/CameraBasedLidarDepth");
             if (lidarDepthShader == null)
             {
@@ -222,7 +226,8 @@ namespace UnityStandardAssets.Vehicles.Car
         }
 
         /// <summary>
-        /// Performs or retrieves the current LiDAR scan and returns the flattened 1D float array for ML-Agents VectorSensor.
+        /// Performs or retrieves the current 3D LiDAR scan and returns the flattened 3D point cloud (x, y, z) float array
+        /// of length TotalBeamCount * 3 for the ML-Agents VectorSensor.
         /// </summary>
         public float[] Perceive()
         {
@@ -392,7 +397,7 @@ namespace UnityStandardAssets.Vehicles.Car
             }
 
             horizontalSamplesPerCamera = Mathf.Max(1, horizontalSamplesPerCamera);
-            verticalChannels = Mathf.Max(1, verticalChannels);
+            verticalChannels = Mathf.Max(2, verticalChannels);
             minRange = Mathf.Max(0.05f, minRange);
             maxRange = Mathf.Max(minRange + 0.1f, maxRange);
 
@@ -419,7 +424,7 @@ namespace UnityStandardAssets.Vehicles.Car
                 cam.enabled = false;
                 cam.orthographic = false;
                 cam.usePhysicalProperties = false;
-                // Each camera renders into its own horizontal slice of the shared atlas RenderTexture
+                // Each camera renders into its own horizontal slice of the shared 3D LiDAR atlas RenderTexture
                 cam.rect = new Rect(i * sliceWidth, 0f, sliceWidth, 1f);
                 cam.fieldOfView = verticalFov;
                 cam.aspect = aspect;
@@ -441,12 +446,14 @@ namespace UnityStandardAssets.Vehicles.Car
             int camCount = Mathf.Max(1, CameraCount);
             int singleWidth = Mathf.Max(1, horizontalSamplesPerCamera);
             int atlasWidth = camCount * singleWidth;
-            int height = Mathf.Max(1, verticalChannels);
+            int height = Mathf.Max(2, verticalChannels);
             int totalBeams = TotalBeamCount;
             int obsSize = ObservationSize;
 
             normalizedRanges = new float[totalBeams];
             observationBuffer = new float[obsSize];
+            localPointCloudXYZ = new Vector3[totalBeams];
+            worldPointCloudXYZ = new Vector3[totalBeams];
             lastWorldRayOrigins = new Vector3[totalBeams];
             lastWorldRayDirections = new Vector3[totalBeams];
             lastHitDistances = new float[totalBeams];
@@ -465,7 +472,7 @@ namespace UnityStandardAssets.Vehicles.Car
 
             scanRenderTexture = new RenderTexture(atlasWidth, height, 16, rtFormat, RenderTextureReadWrite.Linear)
             {
-                name = "LidarScanAtlasRT",
+                name = "Lidar3DScanAtlasRT",
                 filterMode = FilterMode.Point,
                 wrapMode = TextureWrapMode.Clamp,
                 antiAliasing = 1
@@ -474,18 +481,10 @@ namespace UnityStandardAssets.Vehicles.Car
 
             readbackTexture = new Texture2D(atlasWidth, height, texFormat, false, true)
             {
-                name = "LidarAtlasReadbackTex",
+                name = "Lidar3DAtlasReadbackTex",
                 filterMode = FilterMode.Point,
                 wrapMode = TextureWrapMode.Clamp
             };
-
-            hudPreviewTexture = new Texture2D(atlasWidth, height, TextureFormat.RGBA32, false, false)
-            {
-                name = "LidarHudPreviewTex",
-                filterMode = FilterMode.Point,
-                wrapMode = TextureWrapMode.Clamp
-            };
-            hudPreviewPixels = new Color[atlasWidth * height];
         }
 
         private void CaptureScan()
@@ -515,7 +514,7 @@ namespace UnityStandardAssets.Vehicles.Car
             int camCount = lidarCameras.Length;
             int singleWidth = Mathf.Max(1, horizontalSamplesPerCamera);
             int atlasWidth = camCount * singleWidth;
-            int height = Mathf.Max(1, verticalChannels);
+            int height = Mathf.Max(2, verticalChannels);
 
             if (scanRenderTexture == null || scanRenderTexture.width != atlasWidth || scanRenderTexture.height != height)
             {
@@ -549,13 +548,12 @@ namespace UnityStandardAssets.Vehicles.Car
                 SetIgnoredRenderersEnabled(true);
             }
 
-            // Single GPU-to-CPU ReadPixels call for the entire 8-camera atlas
+            // Single GPU-to-CPU ReadPixels call for the entire 8-camera 3D atlas
             RenderTexture.active = scanRenderTexture;
             readbackTexture.ReadPixels(new Rect(0, 0, atlasWidth, height), 0, 0, false);
             RenderTexture.active = previousActive;
 
             Color[] pixels = readbackTexture.GetPixels();
-            bool updateHudPreview = showPointCloudHud && primaryHudSensor == this && hudPreviewTexture != null && hudPreviewPixels != null;
 
             int beamIndex = 0;
             int obsIndex = 0;
@@ -572,14 +570,13 @@ namespace UnityStandardAssets.Vehicles.Car
 
                 for (int v = 0; v < height; v++)
                 {
-                    float viewportV = height == 1 ? 0.5f : (v + 0.5f) / height;
+                    float viewportV = (v + 0.5f) / height;
                     int rowOffset = v * atlasWidth + xOffset;
 
                     for (int u = 0; u < singleWidth; u++)
                     {
                         float viewportU = singleWidth == 1 ? 0.5f : (u + 0.5f) / singleWidth;
-                        int pixelIdx = rowOffset + u;
-                        Color pixel = pixels[pixelIdx];
+                        Color pixel = pixels[rowOffset + u];
 
                         float normDist = Mathf.Clamp01(pixel.r);
                         float distanceMeters = normDist * maxRange;
@@ -590,56 +587,36 @@ namespace UnityStandardAssets.Vehicles.Car
                             normDist = distanceMeters / maxRange;
                         }
 
-                        bool needWorldRay = ignoreGroundAndTriggers || drawPointCloudGizmos || drawDebugRays || showPointCloudHud || outputType == LidarOutputType.PointCloudXYZ;
-                        if (needWorldRay)
-                        {
-                            Ray worldRay = GetBeamWorldRay(cam, viewportU, viewportV);
+                        Ray worldRay = GetBeamWorldRay(cam, viewportU, viewportV);
+                        Vector3 worldHit = worldRay.origin + worldRay.direction * distanceMeters;
+                        Vector3 localHit = transform.InverseTransformPoint(worldHit);
 
-                            if (ignoreGroundAndTriggers && normDist < 0.999f)
-                            {
-                                Vector3 worldHit = worldRay.origin + worldRay.direction * distanceMeters;
-                                Vector3 localHit = transform.InverseTransformPoint(worldHit);
-                                if (localHit.y <= groundHeightThreshold)
-                                {
-                                    normDist = 1f;
-                                    distanceMeters = maxRange;
-                                }
-                            }
-
-                            lastWorldRayOrigins[beamIndex] = worldRay.origin;
-                            lastWorldRayDirections[beamIndex] = worldRay.direction;
-                            lastHitDistances[beamIndex] = distanceMeters;
-                            WriteObservationValue(worldRay, normDist, distanceMeters, ref obsIndex);
-                        }
-                        else
+                        if (ignoreGroundAndTriggers && normDist < 0.999f && localHit.y <= groundHeightThreshold)
                         {
-                            observationBuffer[obsIndex++] = normDist;
-                        }
-
-                        if (updateHudPreview && pixelIdx < hudPreviewPixels.Length)
-                        {
-                            hudPreviewPixels[pixelIdx] = normDist < 0.999f
-                                ? Color.HSVToRGB(Mathf.Clamp01(normDist * 0.35f), 0.95f, 1f)
-                                : new Color(0.05f, 0.07f, 0.1f, 1f);
+                            normDist = 1f;
+                            distanceMeters = maxRange;
+                            worldHit = worldRay.origin + worldRay.direction * distanceMeters;
+                            localHit = Vector3.zero;
                         }
 
                         normalizedRanges[beamIndex] = normDist;
+                        lastWorldRayOrigins[beamIndex] = worldRay.origin;
+                        lastWorldRayDirections[beamIndex] = worldRay.direction;
+                        lastHitDistances[beamIndex] = distanceMeters;
+                        worldPointCloudXYZ[beamIndex] = worldHit;
+                        localPointCloudXYZ[beamIndex] = normDist < 0.999f ? localHit : Vector3.zero;
+
+                        Write3DPointObservation(localHit, normDist, ref obsIndex);
                         beamIndex++;
                     }
                 }
-            }
-
-            if (updateHudPreview)
-            {
-                hudPreviewTexture.SetPixels(hudPreviewPixels);
-                hudPreviewTexture.Apply(false);
             }
         }
 
         private void CaptureScanWithPhysicsRaycast()
         {
             int width = Mathf.Max(1, horizontalSamplesPerCamera);
-            int height = Mathf.Max(1, verticalChannels);
+            int height = Mathf.Max(2, verticalChannels);
 
             int beamIndex = 0;
             int obsIndex = 0;
@@ -657,7 +634,7 @@ namespace UnityStandardAssets.Vehicles.Car
 
                     for (int v = 0; v < height; v++)
                     {
-                        float viewportV = height == 1 ? 0.5f : (v + 0.5f) / height;
+                        float viewportV = (v + 0.5f) / height;
                         for (int u = 0; u < width; u++)
                         {
                             float viewportU = width == 1 ? 0.5f : (u + 0.5f) / width;
@@ -665,20 +642,16 @@ namespace UnityStandardAssets.Vehicles.Car
 
                             float distanceMeters = maxRange;
                             float normDist = 1f;
+                            Vector3 worldHit = worldRay.origin + worldRay.direction * maxRange;
+                            Vector3 localHit = Vector3.zero;
 
                             if (Physics.Raycast(worldRay.origin, worldRay.direction, out RaycastHit hit, maxRange, cullingMask, QueryTriggerInteraction.Ignore))
                             {
-                                bool isGroundHit = false;
-                                if (ignoreGroundAndTriggers)
-                                {
-                                    Vector3 localHit = transform.InverseTransformPoint(hit.point);
-                                    if (localHit.y <= groundHeightThreshold ||
-                                        hit.collider.gameObject.name == "Plane" ||
-                                        hit.collider.CompareTag("Finish"))
-                                    {
-                                        isGroundHit = true;
-                                    }
-                                }
+                                Vector3 candidateLocalHit = transform.InverseTransformPoint(hit.point);
+                                bool isGroundHit = ignoreGroundAndTriggers &&
+                                                   (candidateLocalHit.y <= groundHeightThreshold ||
+                                                    hit.collider.gameObject.name == "Plane" ||
+                                                    hit.collider.CompareTag("Finish"));
 
                                 if (!isGroundHit)
                                 {
@@ -688,6 +661,8 @@ namespace UnityStandardAssets.Vehicles.Car
                                         distanceMeters = Mathf.Clamp(distanceMeters + SampleGaussianNoise(rangeNoiseStdDev), minRange, maxRange);
                                     }
                                     normDist = distanceMeters / maxRange;
+                                    worldHit = worldRay.origin + worldRay.direction * distanceMeters;
+                                    localHit = transform.InverseTransformPoint(worldHit);
                                 }
                             }
 
@@ -695,8 +670,10 @@ namespace UnityStandardAssets.Vehicles.Car
                             lastWorldRayOrigins[beamIndex] = worldRay.origin;
                             lastWorldRayDirections[beamIndex] = worldRay.direction;
                             lastHitDistances[beamIndex] = distanceMeters;
+                            worldPointCloudXYZ[beamIndex] = worldHit;
+                            localPointCloudXYZ[beamIndex] = localHit;
 
-                            WriteObservationValue(worldRay, normDist, distanceMeters, ref obsIndex);
+                            Write3DPointObservation(localHit, normDist, ref obsIndex);
                             beamIndex++;
                         }
                     }
@@ -722,28 +699,20 @@ namespace UnityStandardAssets.Vehicles.Car
             return new Ray(cam.transform.position, worldDir.normalized);
         }
 
-        private void WriteObservationValue(Ray worldRay, float normDist, float distanceMeters, ref int obsIndex)
+        private void Write3DPointObservation(Vector3 localHitMeters, float normDist, ref int obsIndex)
         {
-            if (outputType == LidarOutputType.PointCloudXYZ)
+            if (normDist >= 0.999f)
             {
-                if (normDist >= 0.999f)
-                {
-                    observationBuffer[obsIndex++] = 0f;
-                    observationBuffer[obsIndex++] = 0f;
-                    observationBuffer[obsIndex++] = 0f;
-                }
-                else
-                {
-                    Vector3 worldHitPoint = worldRay.origin + worldRay.direction * distanceMeters;
-                    Vector3 localHitPoint = transform.InverseTransformPoint(worldHitPoint) / maxRange;
-                    observationBuffer[obsIndex++] = Mathf.Clamp(localHitPoint.x, -1f, 1f);
-                    observationBuffer[obsIndex++] = Mathf.Clamp(localHitPoint.y, -1f, 1f);
-                    observationBuffer[obsIndex++] = Mathf.Clamp(localHitPoint.z, -1f, 1f);
-                }
+                observationBuffer[obsIndex++] = 0f;
+                observationBuffer[obsIndex++] = 0f;
+                observationBuffer[obsIndex++] = 0f;
             }
             else
             {
-                observationBuffer[obsIndex++] = normDist;
+                Vector3 normalizedXYZ = localHitMeters / maxRange;
+                observationBuffer[obsIndex++] = Mathf.Clamp(normalizedXYZ.x, -1f, 1f);
+                observationBuffer[obsIndex++] = Mathf.Clamp(normalizedXYZ.y, -1f, 1f);
+                observationBuffer[obsIndex++] = Mathf.Clamp(normalizedXYZ.z, -1f, 1f);
             }
         }
 
@@ -776,7 +745,6 @@ namespace UnityStandardAssets.Vehicles.Car
 
         private void SetIgnoredRenderersEnabled(bool enabledState)
         {
-            // Always hide ego car's own body meshes from its onboard LiDAR cameras
             if (egoRenderers != null)
             {
                 for (int i = 0; i < egoRenderers.Length; i++)
@@ -873,37 +841,55 @@ namespace UnityStandardAssets.Vehicles.Car
                 Destroy(readbackTexture);
                 readbackTexture = null;
             }
-
-            if (hudPreviewTexture != null)
-            {
-                Destroy(hudPreviewTexture);
-                hudPreviewTexture = null;
-            }
         }
-
-        private static CameraBasedLidarSensor primaryHudSensor;
-        private static Texture2D hudWhiteTex;
 
         private void OnEnable()
         {
-            if (primaryHudSensor == null)
+            if (primaryVisualSensor == null)
             {
-                primaryHudSensor = this;
+                primaryVisualSensor = this;
             }
         }
 
         private void OnDisable()
         {
-            if (primaryHudSensor == this)
+            if (primaryVisualSensor == this)
             {
-                primaryHudSensor = null;
+                primaryVisualSensor = null;
             }
         }
 
+        private static Texture2D viewerWhiteTex;
+        private float viewerYawDeg = 35f;
+        private float viewerPitchDeg = 28f;
+        private float viewerDistance = 16f;
+        private bool isDraggingViewer = false;
+
+        private struct Projected3DPoint : IComparable<Projected3DPoint>
+        {
+            public Vector2 screenPos;
+            public Vector2 groundScreenPos;
+            public bool hasGroundPos;
+            public float depthZ;
+            public float sizePx;
+            public Color color;
+
+            public int CompareTo(Projected3DPoint other)
+            {
+                return other.depthZ.CompareTo(depthZ); // Back-to-front painter's sort
+            }
+        }
+
+        private readonly List<Projected3DPoint> projectedPointsBuffer = new List<Projected3DPoint>(1024);
+
         private void LateUpdate()
         {
-            // Ensure live visualization updates even during heuristic spot-finding phases before RequestDecision() starts
-            if (isInitialized && primaryHudSensor == this && (showPointCloudHud || drawPointCloudGizmos || drawDebugRays))
+            if (!isInitialized || primaryVisualSensor != this)
+            {
+                return;
+            }
+
+            if (render3DPointCloud || show3DPointCloudViewer || drawDebugRays)
             {
                 float interval = rotationFrequencyHz > 0f ? (1f / rotationFrequencyHz) : 0.1f;
                 if (Time.time - lastScanTime >= interval)
@@ -911,27 +897,103 @@ namespace UnityStandardAssets.Vehicles.Car
                     Perceive();
                 }
             }
+
+            if (render3DPointCloud)
+            {
+                Draw3DPointCloudMeshes();
+            }
+        }
+
+        private void Ensure3DPointResources()
+        {
+            if (sharedSphereMesh == null)
+            {
+                GameObject tempSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                MeshFilter mf = tempSphere.GetComponent<MeshFilter>();
+                if (mf != null)
+                {
+                    sharedSphereMesh = mf.sharedMesh;
+                }
+                Destroy(tempSphere);
+            }
+
+            if (sharedPointMaterial == null)
+            {
+                // Sprites/Default supports per-instance _Color via MaterialPropertyBlock in Built-in RP
+                Shader unlitShader = Shader.Find("Sprites/Default");
+                if (unlitShader == null)
+                {
+                    unlitShader = Shader.Find("Universal Render Pipeline/Unlit");
+                }
+                if (unlitShader == null)
+                {
+                    unlitShader = Shader.Find("Unlit/Color");
+                }
+                sharedPointMaterial = new Material(unlitShader)
+                {
+                    name = "Lidar3DPointCloudMat",
+                    enableInstancing = true
+                };
+            }
+
+            if (pointPropertyBlock == null)
+            {
+                pointPropertyBlock = new MaterialPropertyBlock();
+            }
+        }
+
+        private void Draw3DPointCloudMeshes()
+        {
+            if (worldPointCloudXYZ == null || normalizedRanges == null)
+            {
+                return;
+            }
+
+            Ensure3DPointResources();
+            if (sharedSphereMesh == null || sharedPointMaterial == null)
+            {
+                return;
+            }
+
+            float diameter = pointCloudSphereRadius * 2f;
+            Vector3 scale = new Vector3(diameter, diameter, diameter);
+            int count = Mathf.Min(worldPointCloudXYZ.Length, normalizedRanges.Length);
+
+            for (int i = 0; i < count; i++)
+            {
+                float norm = normalizedRanges[i];
+                if (norm >= 0.999f)
+                {
+                    continue;
+                }
+
+                Color hitColor = Color.HSVToRGB(Mathf.Clamp01(norm * 0.35f), 0.95f, 1f);
+                pointPropertyBlock.SetColor(BaseColorShaderId, hitColor);
+                pointPropertyBlock.SetColor(ColorShaderId, hitColor);
+
+                Matrix4x4 matrix = Matrix4x4.TRS(worldPointCloudXYZ[i], Quaternion.identity, scale);
+                Graphics.DrawMesh(sharedSphereMesh, matrix, sharedPointMaterial, 0, null, 0, pointPropertyBlock, ShadowCastingMode.Off, false);
+            }
         }
 
         private void OnDestroy()
         {
-            if (primaryHudSensor == this)
+            if (primaryVisualSensor == this)
             {
-                primaryHudSensor = null;
+                primaryVisualSensor = null;
             }
             ReleaseTextures();
         }
 
         private void OnDrawGizmos()
         {
-            if ((!drawPointCloudGizmos && !drawDebugRays) ||
+            if ((!render3DPointCloud && !drawDebugRays) ||
                 lastWorldRayOrigins == null || lastWorldRayDirections == null || normalizedRanges == null)
             {
                 return;
             }
 
-            // In multi-agent scenes, only draw gizmos for the primary agent or when selected
-            if (primaryHudSensor != null && primaryHudSensor != this)
+            if (primaryVisualSensor != null && primaryVisualSensor != this)
             {
                 return;
             }
@@ -946,10 +1008,10 @@ namespace UnityStandardAssets.Vehicles.Car
 
                 if (norm < 0.999f)
                 {
-                    Color hitColor = Color.HSVToRGB(Mathf.Clamp01(norm * 0.35f), 0.95f, 1f); // Red (close) -> Yellow -> Green (far)
+                    Color hitColor = Color.HSVToRGB(Mathf.Clamp01(norm * 0.35f), 0.95f, 1f);
                     Gizmos.color = hitColor;
 
-                    if (drawPointCloudGizmos)
+                    if (render3DPointCloud)
                     {
                         Gizmos.DrawSphere(end, pointCloudSphereRadius);
                     }
@@ -969,53 +1031,81 @@ namespace UnityStandardAssets.Vehicles.Car
 
         private void OnGUI()
         {
-            if (!showPointCloudHud || primaryHudSensor != this || normalizedRanges == null || lastWorldRayOrigins == null)
+            if (!show3DPointCloudViewer || primaryVisualSensor != this || localPointCloudXYZ == null || normalizedRanges == null)
             {
                 return;
             }
 
-            if (hudWhiteTex == null)
+            if (viewerWhiteTex == null)
             {
-                hudWhiteTex = new Texture2D(1, 1);
-                hudWhiteTex.SetPixel(0, 0, Color.white);
-                hudWhiteTex.Apply();
+                viewerWhiteTex = new Texture2D(1, 1);
+                viewerWhiteTex.SetPixel(0, 0, Color.white);
+                viewerWhiteTex.Apply();
             }
 
             const float margin = 12f;
-            const float radarSize = 220f;
-            const float depthStripHeight = 44f;
-            Rect panelRect = new Rect(margin, margin, radarSize + 16f, radarSize + depthStripHeight + 52f);
+            const float viewWidth = 310f;
+            const float viewHeight = 250f;
+            const float footerHeight = 46f;
+            Rect panelRect = new Rect(margin, margin, viewWidth + 16f, viewHeight + footerHeight + 32f);
+            Rect viewportRect = new Rect(panelRect.x + 8f, panelRect.y + 24f, viewWidth, viewHeight);
 
-            // Background panel
-            GUI.color = new Color(0.08f, 0.09f, 0.12f, 0.85f);
-            GUI.DrawTexture(panelRect, hudWhiteTex);
+            Handle3DViewerInput(viewportRect);
+
+            // Outer panel background
+            GUI.color = new Color(0.07f, 0.08f, 0.11f, 0.90f);
+            GUI.DrawTexture(panelRect, viewerWhiteTex);
+
+            // Header title
             GUI.color = Color.white;
-
-            GUIStyle titleStyle = new GUIStyle(GUI.skin.label)
+            GUIStyle headerStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 11,
                 fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter
+                alignment = TextAnchor.MiddleLeft
             };
-            GUI.Label(new Rect(panelRect.x, panelRect.y + 4f, panelRect.width, 18f),
-                $"LiDAR Point Cloud ({TotalBeamCount} beams)", titleStyle);
+            GUI.Label(new Rect(panelRect.x + 10f, panelRect.y + 4f, viewWidth - 60f, 18f),
+                $"3D LiDAR Point Cloud ({TotalBeamCount} XYZ pts)", headerStyle);
 
-            // Bird's-Eye-View (BEV) Radar Box
-            Rect radarRect = new Rect(panelRect.x + 8f, panelRect.y + 24f, radarSize, radarSize);
-            GUI.color = new Color(0.03f, 0.04f, 0.06f, 0.95f);
-            GUI.DrawTexture(radarRect, hudWhiteTex);
+            if (GUI.Button(new Rect(panelRect.xMax - 64f, panelRect.y + 3f, 56f, 18f), "Reset 3D"))
+            {
+                viewerYawDeg = 35f;
+                viewerPitchDeg = 28f;
+                viewerDistance = 16f;
+            }
 
-            Vector2 center = radarRect.center;
-            float halfRadar = radarSize * 0.5f;
+            // 3D Viewport background
+            GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.96f);
+            GUI.DrawTexture(viewportRect, viewerWhiteTex);
 
-            // Draw ego car icon at center of radar
-            float carWidthPx = Mathf.Max(6f, (1.8f / maxRange) * halfRadar);
-            float carLengthPx = Mathf.Max(12f, (4.2f / maxRange) * halfRadar);
-            GUI.color = new Color(0.2f, 0.6f, 1f, 0.9f);
-            GUI.DrawTexture(new Rect(center.x - carWidthPx * 0.5f, center.y - carLengthPx * 0.5f, carWidthPx, carLengthPx), hudWhiteTex);
+            Quaternion camRot = Quaternion.Euler(viewerPitchDeg, viewerYawDeg, 0f);
+            Vector3 camTarget = new Vector3(0f, 0.6f, 0f);
+            Vector3 camPos = camTarget - (camRot * Vector3.forward) * viewerDistance;
+            float focalLength = viewHeight * 0.95f;
 
-            // Plot live 3D hit points projected into ego-car top-down (X, Z) coordinates
-            int count = Mathf.Min(lastWorldRayOrigins.Length, normalizedRanges.Length);
+            GUI.BeginClip(viewportRect);
+            Rect localViewport = new Rect(0f, 0f, viewWidth, viewHeight);
+
+            // 1. Draw 3D ground reference grid in ego-car 3D space (y = 0)
+            Color gridColor = new Color(0.16f, 0.22f, 0.30f, 0.55f);
+            for (int g = -12; g <= 12; g += 4)
+            {
+                Draw3DLineInViewport(new Vector3(g, 0f, -12f), new Vector3(g, 0f, 12f), camPos, camRot, focalLength, localViewport, gridColor, 1f);
+                Draw3DLineInViewport(new Vector3(-12f, 0f, g), new Vector3(12f, 0f, g), camPos, camRot, focalLength, localViewport, gridColor, 1f);
+            }
+
+            // 2. Draw 3D Ego Car Wireframe Box (1.8m W x 1.4m H x 4.2m L) and 3D XYZ axes
+            Draw3DWireBox(new Vector3(0f, 0.7f, 0f), new Vector3(1.8f, 1.4f, 4.2f), camPos, camRot, focalLength, localViewport, new Color(0.2f, 0.65f, 1f, 0.75f));
+            Draw3DLineInViewport(Vector3.zero, new Vector3(2.2f, 0f, 0f), camPos, camRot, focalLength, localViewport, new Color(1f, 0.25f, 0.25f, 0.9f), 2f); // +X Right
+            Draw3DLineInViewport(Vector3.zero, new Vector3(0f, 2.2f, 0f), camPos, camRot, focalLength, localViewport, new Color(0.25f, 1f, 0.35f, 0.9f), 2f); // +Y Up
+            Draw3DLineInViewport(Vector3.zero, new Vector3(0f, 0f, 3.0f), camPos, camRot, focalLength, localViewport, new Color(0.3f, 0.6f, 1f, 0.9f), 2f);   // +Z Forward
+
+            // 3. Project and depth-sort all active 3D Point Cloud (x, y, z) coordinates
+            projectedPointsBuffer.Clear();
+            int count = Mathf.Min(localPointCloudXYZ.Length, normalizedRanges.Length);
+            int activeHitCount = 0;
+            Vector3 sampleHitXYZ = Vector3.zero;
+
             for (int i = 0; i < count; i++)
             {
                 float norm = normalizedRanges[i];
@@ -1024,33 +1114,169 @@ namespace UnityStandardAssets.Vehicles.Car
                     continue;
                 }
 
-                float dist = lastHitDistances != null && i < lastHitDistances.Length ? lastHitDistances[i] : norm * maxRange;
-                Vector3 worldHit = lastWorldRayOrigins[i] + lastWorldRayDirections[i] * dist;
-                Vector3 localHit = transform.InverseTransformPoint(worldHit);
-
-                float px = center.x + (localHit.x / maxRange) * halfRadar;
-                float py = center.y - (localHit.z / maxRange) * halfRadar;
-
-                if (radarRect.Contains(new Vector2(px, py)))
+                Vector3 ptXYZ = localPointCloudXYZ[i];
+                activeHitCount++;
+                if (activeHitCount == 1)
                 {
-                    GUI.color = Color.HSVToRGB(Mathf.Clamp01(norm * 0.35f), 0.95f, 1f);
-                    GUI.DrawTexture(new Rect(px - 2f, py - 2f, 4f, 4f), hudWhiteTex);
+                    sampleHitXYZ = ptXYZ;
+                }
+
+                if (TryProject3DPoint(ptXYZ, camPos, camRot, focalLength, localViewport, out Vector2 screenPt, out float depthZ))
+                {
+                    Vector2 groundScreenPt = Vector2.zero;
+                    bool hasGround = show3DElevationStalks &&
+                                     TryProject3DPoint(new Vector3(ptXYZ.x, 0f, ptXYZ.z), camPos, camRot, focalLength, localViewport, out groundScreenPt, out _);
+
+                    float pointSize = Mathf.Clamp(52f / Mathf.Max(1f, depthZ), 2.5f, 6.5f);
+                    Color hitColor = Color.HSVToRGB(Mathf.Clamp01(norm * 0.35f), 0.95f, 1f);
+
+                    projectedPointsBuffer.Add(new Projected3DPoint
+                    {
+                        screenPos = screenPt,
+                        groundScreenPos = groundScreenPt,
+                        hasGroundPos = hasGround,
+                        depthZ = depthZ,
+                        sizePx = pointSize,
+                        color = hitColor
+                    });
                 }
             }
 
-            // Draw 360° Panoramic Depth Atlas below the BEV radar
-            Texture2D stripTex = hudPreviewTexture != null ? hudPreviewTexture : readbackTexture;
-            if (stripTex != null)
-            {
-                Rect stripLabelRect = new Rect(panelRect.x + 8f, radarRect.yMax + 2f, radarSize, 16f);
-                GUI.color = Color.white;
-                GUI.Label(stripLabelRect, "360° Depth Map (8 Cams × 4 Layers):");
+            projectedPointsBuffer.Sort();
 
-                Rect stripRect = new Rect(panelRect.x + 8f, radarRect.yMax + 18f, radarSize, depthStripHeight);
-                GUI.DrawTexture(stripRect, stripTex, ScaleMode.StretchToFill, false);
+            // 4. Render 3D elevation stalks and 3D point cloud spheres
+            for (int i = 0; i < projectedPointsBuffer.Count; i++)
+            {
+                Projected3DPoint p = projectedPointsBuffer[i];
+                if (p.hasGroundPos)
+                {
+                    Color stalkColor = new Color(p.color.r, p.color.g, p.color.b, 0.28f);
+                    Draw2DLineClipped(p.groundScreenPos, p.screenPos, stalkColor, 1f);
+                }
+
+                GUI.color = p.color;
+                float half = p.sizePx * 0.5f;
+                GUI.DrawTexture(new Rect(p.screenPos.x - half, p.screenPos.y - half, p.sizePx, p.sizePx), viewerWhiteTex);
             }
 
+            GUI.color = new Color(0.75f, 0.82f, 0.92f, 0.75f);
+            GUI.Label(new Rect(6f, viewHeight - 18f, viewWidth - 12f, 16f),
+                $"Drag mouse to orbit 3D | Scroll to zoom | Layers: {verticalChannels}");
+
+            GUI.EndClip();
+
+            // Footer telemetry showing 3D (x, y, z) observation vector stats
+            GUIStyle footerStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 10,
+                alignment = TextAnchor.UpperLeft
+            };
             GUI.color = Color.white;
+            Rect footerRect = new Rect(panelRect.x + 8f, viewportRect.yMax + 4f, viewWidth, footerHeight);
+            GUI.Label(footerRect,
+                $"3D Hits: {activeHitCount}/{TotalBeamCount}  |  VectorSensor: {ObservationSize} floats ({TotalBeamCount}×XYZ)\n" +
+                $"Sample 3D Point (m): X={sampleHitXYZ.x:F2}, Y={sampleHitXYZ.y:F2}, Z={sampleHitXYZ.z:F2}",
+                footerStyle);
+        }
+
+        private void Handle3DViewerInput(Rect viewportRect)
+        {
+            Event e = Event.current;
+            if (e == null)
+            {
+                return;
+            }
+
+            if (e.type == EventType.MouseDown && e.button == 0 && viewportRect.Contains(e.mousePosition))
+            {
+                isDraggingViewer = true;
+                e.Use();
+            }
+            else if (e.type == EventType.MouseUp && e.button == 0)
+            {
+                isDraggingViewer = false;
+            }
+            else if (e.type == EventType.MouseDrag && isDraggingViewer)
+            {
+                viewerYawDeg += e.delta.x * 0.6f;
+                viewerPitchDeg = Mathf.Clamp(viewerPitchDeg + e.delta.y * 0.5f, 5f, 85f);
+                e.Use();
+            }
+            else if (e.type == EventType.ScrollWheel && viewportRect.Contains(e.mousePosition))
+            {
+                viewerDistance = Mathf.Clamp(viewerDistance + e.delta.y * 0.8f, 5f, 35f);
+                e.Use();
+            }
+        }
+
+        private static bool TryProject3DPoint(Vector3 localPoint, Vector3 camPos, Quaternion camRot, float focalLength, Rect viewport, out Vector2 screenPos, out float depthZ)
+        {
+            Vector3 viewSpace = Quaternion.Inverse(camRot) * (localPoint - camPos);
+            depthZ = viewSpace.z;
+            if (depthZ <= 0.2f)
+            {
+                screenPos = Vector2.zero;
+                return false;
+            }
+
+            float sx = viewport.width * 0.5f + (viewSpace.x / depthZ) * focalLength;
+            float sy = viewport.height * 0.5f - (viewSpace.y / depthZ) * focalLength;
+            screenPos = new Vector2(sx, sy);
+            return sx >= -20f && sx <= viewport.width + 20f && sy >= -20f && sy <= viewport.height + 20f;
+        }
+
+        private static void Draw3DWireBox(Vector3 center, Vector3 size, Vector3 camPos, Quaternion camRot, float focal, Rect viewport, Color color)
+        {
+            Vector3 h = size * 0.5f;
+            Vector3[] c = new Vector3[8]
+            {
+                center + new Vector3(-h.x, -h.y, -h.z),
+                center + new Vector3( h.x, -h.y, -h.z),
+                center + new Vector3( h.x, -h.y,  h.z),
+                center + new Vector3(-h.x, -h.y,  h.z),
+                center + new Vector3(-h.x,  h.y, -h.z),
+                center + new Vector3( h.x,  h.y, -h.z),
+                center + new Vector3( h.x,  h.y,  h.z),
+                center + new Vector3(-h.x,  h.y,  h.z)
+            };
+
+            for (int i = 0; i < 4; i++)
+            {
+                int next = (i + 1) % 4;
+                Draw3DLineInViewport(c[i], c[next], camPos, camRot, focal, viewport, color, 1.5f);
+                Draw3DLineInViewport(c[i + 4], c[next + 4], camPos, camRot, focal, viewport, color, 1.5f);
+                Draw3DLineInViewport(c[i], c[i + 4], camPos, camRot, focal, viewport, color, 1.5f);
+            }
+        }
+
+        private static void Draw3DLineInViewport(Vector3 a, Vector3 b, Vector3 camPos, Quaternion camRot, float focal, Rect viewport, Color color, float thickness)
+        {
+            if (TryProject3DPoint(a, camPos, camRot, focal, viewport, out Vector2 sa, out _) &&
+                TryProject3DPoint(b, camPos, camRot, focal, viewport, out Vector2 sb, out _))
+            {
+                Draw2DLineClipped(sa, sb, color, thickness);
+            }
+        }
+
+        private static void Draw2DLineClipped(Vector2 a, Vector2 b, Color color, float thickness)
+        {
+            Vector2 delta = b - a;
+            float len = delta.magnitude;
+            if (len < 0.5f)
+            {
+                return;
+            }
+
+            Matrix4x4 prevMatrix = GUI.matrix;
+            Color prevColor = GUI.color;
+
+            GUI.color = color;
+            float angle = Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg;
+            GUIUtility.RotateAroundPivot(angle, a);
+            GUI.DrawTexture(new Rect(a.x, a.y - thickness * 0.5f, len, thickness), viewerWhiteTex);
+
+            GUI.matrix = prevMatrix;
+            GUI.color = prevColor;
         }
     }
 }

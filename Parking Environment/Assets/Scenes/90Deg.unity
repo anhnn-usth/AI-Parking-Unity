@@ -4293,7 +4293,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8268270515027760545, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
       propertyPath: m_BrainParameters.VectorObservationSize
-      value: 513
+      value: 1537
       objectReference: {fileID: 0}
     - target: {fileID: 8268270515027760545, guid: cd21f03e90f506a4da9a98f1e4df287a, type: 3}
       propertyPath: m_BrainParameters.NumStackedVectorObservations
