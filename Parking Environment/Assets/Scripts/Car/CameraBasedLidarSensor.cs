@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
+using Unity.MLAgents;
 
 namespace UnityStandardAssets.Vehicles.Car
 {
@@ -81,7 +82,10 @@ namespace UnityStandardAssets.Vehicles.Car
         public LayerMask cullingMask = ~0;
 
         [Header("3D Point Cloud Visualization")]
-        [Tooltip("Render 3D point cloud spheres directly in the 3D scene (visible in both Game View and Scene View).")]
+        [Tooltip("Automatically bypass 3D point-cloud GUI and mesh rendering when connected to a Python ML-Agents trainer to maximize training speed and guarantee zero visual overhead.")]
+        public bool autoDisableVisualsDuringTraining = true;
+
+        [Tooltip("Render 3D point cloud spheres directly in the 3D scene (visible only to Main Camera, never to LiDAR cameras).")]
         public bool render3DPointCloud = true;
 
         [Tooltip("Show the interactive 3D Perspective Point-Cloud Viewer HUD in the Game View (drag with mouse to orbit in 3D).")]
@@ -882,17 +886,36 @@ namespace UnityStandardAssets.Vehicles.Car
 
         private readonly List<Projected3DPoint> projectedPointsBuffer = new List<Projected3DPoint>(1024);
 
+        private bool ShouldRenderVisuals()
+        {
+            if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
+            {
+                return false;
+            }
+
+            if (autoDisableVisualsDuringTraining && Academy.IsInitialized && Academy.Instance.IsCommunicatorOn)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
         private void LateUpdate()
         {
-            if (!isInitialized || primaryVisualSensor != this)
+            if (!isInitialized || primaryVisualSensor != this || !ShouldRenderVisuals())
             {
                 return;
             }
 
+            // Only trigger a fallback Perceive() from LateUpdate when CollectObservations() is not actively polling
+            // (e.g., during the heuristic spot-finding cruise phase before RequestDecision() begins),
+            // so we never alter the deterministic FixedUpdate scan timing during RL steps.
             if (render3DPointCloud || show3DPointCloudViewer || drawDebugRays)
             {
                 float interval = rotationFrequencyHz > 0f ? (1f / rotationFrequencyHz) : 0.1f;
-                if (Time.time - lastScanTime >= interval)
+                float staleThreshold = Mathf.Max(interval * 2.5f, 0.25f);
+                if (Time.time - lastScanTime >= staleThreshold)
                 {
                     Perceive();
                 }
@@ -908,18 +931,33 @@ namespace UnityStandardAssets.Vehicles.Car
         {
             if (sharedSphereMesh == null)
             {
-                GameObject tempSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                MeshFilter mf = tempSphere.GetComponent<MeshFilter>();
-                if (mf != null)
+                // Load built-in sphere mesh directly without spawning a temporary SphereCollider in the physics world
+                sharedSphereMesh = Resources.GetBuiltinResource<Mesh>("New-Sphere.fbx");
+                if (sharedSphereMesh == null)
                 {
-                    sharedSphereMesh = mf.sharedMesh;
+                    sharedSphereMesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
                 }
-                Destroy(tempSphere);
+                if (sharedSphereMesh == null)
+                {
+                    GameObject tempSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    Collider tempCol = tempSphere.GetComponent<Collider>();
+                    if (tempCol != null)
+                    {
+                        tempCol.enabled = false;
+                    }
+                    MeshFilter mf = tempSphere.GetComponent<MeshFilter>();
+                    if (mf != null)
+                    {
+                        sharedSphereMesh = mf.sharedMesh;
+                    }
+                    DestroyImmediate(tempSphere);
+                }
             }
 
             if (sharedPointMaterial == null)
             {
                 // Sprites/Default supports per-instance _Color via MaterialPropertyBlock in Built-in RP
+                // and has no "RenderType"="Opaque" tag, so replacement shaders ignore it
                 Shader unlitShader = Shader.Find("Sprites/Default");
                 if (unlitShader == null)
                 {
@@ -949,6 +987,13 @@ namespace UnityStandardAssets.Vehicles.Car
                 return;
             }
 
+            // Render 3D point cloud spheres ONLY to Camera.main so they are NEVER rendered into any LiDAR depth camera
+            Camera displayCam = Camera.main;
+            if (displayCam == null)
+            {
+                return;
+            }
+
             Ensure3DPointResources();
             if (sharedSphereMesh == null || sharedPointMaterial == null)
             {
@@ -972,7 +1017,7 @@ namespace UnityStandardAssets.Vehicles.Car
                 pointPropertyBlock.SetColor(ColorShaderId, hitColor);
 
                 Matrix4x4 matrix = Matrix4x4.TRS(worldPointCloudXYZ[i], Quaternion.identity, scale);
-                Graphics.DrawMesh(sharedSphereMesh, matrix, sharedPointMaterial, 0, null, 0, pointPropertyBlock, ShadowCastingMode.Off, false);
+                Graphics.DrawMesh(sharedSphereMesh, matrix, sharedPointMaterial, 0, displayCam, 0, pointPropertyBlock, ShadowCastingMode.Off, false);
             }
         }
 
@@ -987,7 +1032,8 @@ namespace UnityStandardAssets.Vehicles.Car
 
         private void OnDrawGizmos()
         {
-            if ((!render3DPointCloud && !drawDebugRays) ||
+            if (!ShouldRenderVisuals() ||
+                (!render3DPointCloud && !drawDebugRays) ||
                 lastWorldRayOrigins == null || lastWorldRayDirections == null || normalizedRanges == null)
             {
                 return;
@@ -1031,7 +1077,7 @@ namespace UnityStandardAssets.Vehicles.Car
 
         private void OnGUI()
         {
-            if (!show3DPointCloudViewer || primaryVisualSensor != this || localPointCloudXYZ == null || normalizedRanges == null)
+            if (!ShouldRenderVisuals() || !show3DPointCloudViewer || primaryVisualSensor != this || localPointCloudXYZ == null || normalizedRanges == null)
             {
                 return;
             }
